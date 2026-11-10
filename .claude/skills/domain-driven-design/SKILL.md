@@ -75,11 +75,11 @@ The snippets are illustrative and require the application's domain types and imp
 Keep existing public identifiers and persistence mappings unless the task includes a migration.
 
 ```java
-// ✅ Aggregate root controls all access to children
+// GOOD: Aggregate root controls all access to children
 order.addItem(productId, quantity); // through root
 order.removeItem(lineNo);           // through root
 
-// ❌ Direct child access from outside
+// BAD: Direct child access from outside
 order.getItems().add(new OrderItem(...)); // bypasses invariants
 ```
 
@@ -222,7 +222,7 @@ concatenating user input. There are no JPA `Specification`s.
   or a test seam you cannot get otherwise.
 
 ```java
-// ✅ GOOD — ACL translates the external payment API to domain concepts
+// GOOD — ACL translates the external payment API to domain concepts
 @Component
 public class PaymentGatewayClient {
 

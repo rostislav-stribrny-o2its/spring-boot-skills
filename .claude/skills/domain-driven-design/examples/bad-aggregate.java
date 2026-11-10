@@ -1,4 +1,4 @@
-// ❌ BAD — JPA entity used as the domain model, anemic, no invariant enforcement, no events
+// BAD — JPA entity used as the domain model, anemic, no invariant enforcement, no events
 
 @Entity                                      // JPA — not part of the stack (Spring Data JDBC only)
 @Data                                        // generates public setters — anyone can mutate state

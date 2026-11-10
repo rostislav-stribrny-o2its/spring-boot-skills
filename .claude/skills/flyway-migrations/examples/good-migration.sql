@@ -1,4 +1,4 @@
--- ✅ GOOD — V00004__add_shipping_address_to_customer_order.sql
+-- GOOD — V00004__add_shipping_address_to_customer_order.sql
 -- Five-digit version, double underscore, nullable column, multi-step rename.
 -- The index for shipping_address lives in its own file:
 -- good-migration-concurrent-index.sql (V00005). CREATE INDEX CONCURRENTLY must not

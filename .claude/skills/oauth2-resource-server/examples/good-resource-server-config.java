@@ -1,4 +1,4 @@
-// ✅ GOOD — stateless JWT resource server, one converter bean, values from configuration
+// GOOD — stateless JWT resource server, one converter bean, values from configuration
 
 @Configuration
 @EnableWebSecurity
