@@ -133,6 +133,15 @@ Cross-module calls go service → service (never into another module's persisten
 - Numbers: IDs `Long`, exact values `BigDecimal`; never `double`/`float` for money or quantities;
   no `intValue()`/`longValue()` on `BigDecimal`/`BigInteger` outside a dedicated converter.
 
+## Opereta
+
+- Code and identifiers in English, **comments in code in Czech**.
+- Lombok is enabled (`@RequiredArgsConstructor`, `@Slf4j`); data carriers stay `record`s.
+- Business logic of the earlier proof of concept written in PL/pgSQL moves into `@Service`
+  classes; nothing of it stays in the database.
+- Modules `backend` and `integration-service` follow the same layers; `integration-contract`
+  holds only shared `…Row` contract types and enums.
+
 ## Gotchas
 - Agent puts business logic in the delegate, a mapper or a repository — it belongs in the domain or `@Service`
 - Agent injects a repository into the delegate — the delegate calls one service method
@@ -155,3 +164,4 @@ Rewritten for the Elysium Java base (JDK 25, Spring Boot 4, contract-first API, 
 MapStruct, three type families). Source: [rrezartprebreza/spring-boot-skills](https://github.com/rrezartprebreza/spring-boot-skills),
 `skills/spring-boot-4/layered-architecture` (layer responsibilities, service and configuration rules), MIT License,
 © Rrezart Prebreza. The original is kept in `_unused/skills/spring-boot-4/layered-architecture`.
+Opereta layer: section "Opereta".

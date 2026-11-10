@@ -155,6 +155,23 @@ every mapper uses (see `backend-layers`).
 - Optional dependencies are excluded from the repackaged jar unless `includeOptional` is set
   (upstream note; verify against the Boot 4 migration guide when it matters).
 
+## Opereta
+
+- **Modules** (decided by R. Stříbrný, OQ-014 J1): `api-model`, `api-spec`, `backend`, `integration-contract`,
+  `integration-service` — one reactor with a common parent POM.
+  - `backend` — the Spring Boot application with all business logic;
+  - `integration-contract` — shared library: only the contract types of the integration (`…Row`
+    records of the transport and control tables, enums), no Spring, no business logic;
+  - `integration-service` — a second Spring Boot application (MS SQL and PostgreSQL drivers,
+    ShedLock, configuration from the environment), no public route.
+- **Interfaces:** only `backend` has an interface, and it is `public`; its module code in the spec
+  path is `be`: `specs/opereta/openapi/public/be/be-service-public.json`. `integration-service`
+  exposes no API. `integration-service` has its own test suite and shared context.
+- **Lombok is enabled** in Opereta (processor order Lombok → `lombok-mapstruct-binding` → MapStruct).
+- Where the reactor root sits in the repository follows the Opereta template of Elysium
+  (Java backend in `backend/`); confirm the exact layout against the template in `main` before
+  creating modules.
+
 ## Gotchas
 - Agent creates separate builds or repositories for the API model — one reactor, one `mvn verify`
 - Agent adds a hexagonal split (`domain`/`application`/`infrastructure` modules) — layers are packages inside the application module
@@ -175,3 +192,4 @@ Rewritten for the Elysium Java base (JDK 25, Spring Boot 4, one reactor: API mod
 Source: [rrezartprebreza/spring-boot-skills](https://github.com/rrezartprebreza/spring-boot-skills),
 `skills/spring-boot-4/multi-module-maven` (parent POM conventions, processor order, Boot 4 modular starters), MIT License,
 © Rrezart Prebreza. The original is kept in `_unused/skills/spring-boot-4/multi-module-maven`.
+Opereta layer: section "Opereta".

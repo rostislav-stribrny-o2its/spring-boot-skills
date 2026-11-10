@@ -217,6 +217,16 @@ catches both.
 ArchUnit tests over the API model enforce the authoring patterns (every `List` annotated with its
 item schema, enums with `enumAsRef`, polymorphic bases with a discriminator, no raw `Object`).
 
+## Opereta
+
+- One interface: module `be`, visibility `public`, spec `specs/opereta/openapi/public/be/be-service-public.json`.
+- Every operation carries **`x-des-id: DES-<MOD>-NNNNN`** (ID of the design element in the
+  technical specification, five digits); the API model makes it mandatory, the linter checks its
+  shape, CI compares the documentation anchor with the spec by this ID.
+- Names in the contract are English; descriptions are Czech (application documentation language).
+- The frontend reads nothing from the token; identity, roles and display permissions come from
+  `/api/me` (see `oauth2-resource-server`).
+
 ## Gotchas
 - Agent edits the OpenAPI JSON/YAML by hand — change the API model and rebuild
 - Agent writes `api/openapi.yaml` or `src/main/resources/openapi.yaml` as the source of truth — the source is the API model; the spec lives under `specs/…` and is generated
@@ -239,3 +249,4 @@ generated code). Sources: [rrezartprebreza/spring-boot-skills](https://github.co
 `skills/spring-boot-4/openapi-first` (generator settings, delegate pattern) and
 `skills/spring-boot-4/rest-api-conventions` (URL and status conventions, page size cap), MIT License,
 © Rrezart Prebreza. The originals are kept in `_unused/skills/spring-boot-4/`.
+Opereta layer: section "Opereta".

@@ -94,6 +94,17 @@ permissive test configuration to get green tests.
   before parents. Reference data of lookup tables comes from the migrations.
 - End-to-end tests against a running backend delete everything they created.
 
+## Opereta
+
+- Requirement tags are the IDs of the technical specification: `F-<CODE>-NNNNN` (functional, e.g.
+  `F-REQ-00012`) or `N-<AREA>-NNNNN` (non-functional), five digits with leading zeros, exactly as
+  written there; IDs of change requests never appear in code, tests
+  or commits.
+- Test persons use personal numbers from the reserved range (`OPERETA_TEST_PERSONAL_NUMBER_RANGE`);
+  never real personal numbers.
+- Add the Opereta rows of the security matrix from `spring-testing-security` (unpaired account,
+  suspension, role administration).
+
 ## Dependencies (test scope)
 
 ```xml
@@ -137,3 +148,4 @@ Source: [rrezartprebreza/spring-boot-skills](https://github.com/rrezartprebreza/
 `skills/spring-boot-4/testing-pyramid` (security regression matrix, naming, Testcontainers 2 dependencies), MIT License,
 © Rrezart Prebreza. The original is kept in `_unused/skills/spring-boot-4/testing-pyramid`. Techniques are delegated to
 the spring-testing-* skills from [Kehrlann/spring-boot-testing-skills](https://github.com/Kehrlann/spring-boot-testing-skills) (Apache-2.0).
+Opereta layer: section "Opereta".
