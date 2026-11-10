@@ -119,6 +119,43 @@ A person with a valid token but no record in the application gets no business au
 every endpoint requires a concrete role, so "authenticated" alone opens nothing except an
 explicit status endpoint.
 
+## Opereta: application roles, personal number, paired accounts
+
+Opereta uses the **application-roles model** with Keycloak (other OIDC issuers only by configuration):
+
+- **Principal** = claim `personal_number` (`app.security.principal-claim: personal_number`). It comes only from a trusted source and is matched against the HR master data; the link between the identity-provider account and the personal number never changes silently.
+- **Entry role** from the token: one stable role name (e.g. `opereta-user`) granted by the single entry group in AD. It proves only "may enter", never a business permission. Check the client role and the `azp` claim.
+- **Business roles** come from the application database. `UserRoleService.findPairedRoles(personalNumber)` returns `Optional<Set<String>>`: empty = the person is not paired with a record of the application.
+- **One converter** builds the authorities: `ROLE_OPERETA_USER` from the entry role; if paired, `ROLE_PAIRED` plus the business roles from the database. Short cache (a ban recorded in the database must take effect quickly; access tokens are short-lived).
+- **Authorization:** `ROLE_OPERETA_USER` reaches only `/api/me/status` (the status screen of an unpaired account, audited); every other endpoint requires `ROLE_PAIRED` **and** a concrete business role via `@PreAuthorize`.
+- **Role administration rules** (enforced in the service, tested): nobody changes their own roles; an administrator does not change another administrator's roles; every role change is audited.
+- **Environment variables** (never constants): `OPERETA_OIDC_ISSUER_URI`, `OPERETA_OIDC_JWKS_URI`, `OPERETA_OIDC_AUDIENCE`, `OPERETA_OIDC_CLIENT_ID`, mapped to the Spring properties shown below.
+- **Same origin:** one hostname per environment, the proxy routes `/auth` → Keycloak, `/api` → backend, `/` → frontend; CORS stays disabled.
+- **Local profile without SSO** (development and tests only) is never part of a TEST/PROD image; the application refuses to start with it outside local, and CI checks it.
+
+```java
+@Bean
+public Converter<Jwt, AbstractAuthenticationToken> jwtAuthConverter(SecurityProps props,
+                                                                     UserRoleService userRoles) {
+    return jwt -> {
+        String personalNumber = jwt.getClaimAsString(props.principalClaim());   // "personal_number"
+        if (personalNumber == null || personalNumber.isBlank()) {
+            throw new BadCredentialsException("Missing principal claim");
+        }
+        List<GrantedAuthority> authorities = new ArrayList<>();
+        if (!hasEntryRole(jwt, props)) {                                         // client role + azp check
+            return new JwtAuthenticationToken(jwt, authorities, personalNumber); // no entry role: nothing
+        }
+        authorities.add(new SimpleGrantedAuthority("ROLE_OPERETA_USER"));
+        userRoles.findPairedRoles(personalNumber).ifPresent(roles -> {           // cached briefly
+            authorities.add(new SimpleGrantedAuthority("ROLE_PAIRED"));
+            roles.forEach(r -> authorities.add(new SimpleGrantedAuthority("ROLE_" + r)));
+        });
+        return new JwtAuthenticationToken(jwt, authorities, personalNumber);
+    };
+}
+```
+
 ## application.yml — values from the environment
 
 ```yaml
@@ -127,13 +164,13 @@ spring:
     oauth2:
       resourceserver:
         jwt:
-          issuer-uri: ${OIDC_ISSUER_URI}     # e.g. https://app.example.com/auth/realms/my-realm
-          jwk-set-uri: ${OIDC_JWKS_URI}      # optional; avoids discovery at startup
-          audiences: ${OIDC_AUDIENCE}        # without it, tokens minted for ANY client are accepted
+          issuer-uri: ${OPERETA_OIDC_ISSUER_URI}   # https://<env-host>/auth/realms/opereta
+          jwk-set-uri: ${OPERETA_OIDC_JWKS_URI}    # optional; avoids discovery at startup
+          audiences: ${OPERETA_OIDC_AUDIENCE}      # without it, tokens minted for ANY client are accepted
 
 app:
   security:
-    principal-claim: ${OIDC_PRINCIPAL_CLAIM:sub}
+    principal-claim: personal_number
     cors:
       allowed-origins: ${CORS_ALLOWED_ORIGINS:}   # empty = CORS disabled (same-origin deployment)
 ```
@@ -243,6 +280,8 @@ before treating another minor version or an illustrative snippet as verified.
 
 ## Gotchas
 - Agent hard-codes issuer, JWK URL, audience or CORS origins — all come from environment variables
+- (Opereta) Agent grants business roles from token claims or lets `ROLE_OPERETA_USER` reach anything but `/api/me/status` — business roles come from the database and require `ROLE_PAIRED`
+- (Opereta) Agent identifies people by `sub`, email or username — the principal is `personal_number`
 - Agent enables CORS with `localhost:3000` or `*` in a same-origin deployment — leave CORS disabled unless the frontend really runs on another origin
 - Agent maps business roles from the token AND from the database — pick one model; with application roles the token only identifies the person
 - Agent normalizes claims in several places (controller, service, filter) — one converter bean, one claim extractor
@@ -265,6 +304,7 @@ before treating another minor version or an illustrative snippet as verified.
 Adapted for the Elysium Java base (JDK 25, Spring Boot 4, Spring Security 7).
 Source: [rrezartprebreza/spring-boot-skills](https://github.com/rrezartprebreza/spring-boot-skills),
 `skills/spring-boot-4/oauth2-resource-server`, MIT License, © Rrezart Prebreza.
+Opereta layer: application roles from the database, `personal_number` principal, paired accounts, `OPERETA_OIDC_*` variables.
 Changes: issuer/audience/principal claim and CORS from the environment, same-origin default
 without CORS, token roles vs. application roles, `Long` IDs, controller example replaced by a
 service reading the identity (generated controllers).
