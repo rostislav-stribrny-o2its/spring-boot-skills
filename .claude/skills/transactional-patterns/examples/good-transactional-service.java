@@ -9,7 +9,7 @@ public class OrderService {
     private final OrderRepository orderRepository;
     private final OrderAuditService auditService;  // separate bean to avoid self-invocation
 
-    public Order findById(UUID id) {
+    public Order findById(Long id) {
         return orderRepository.findById(id)
             .orElseThrow(() -> new OrderNotFoundException(id));
     }
@@ -19,18 +19,18 @@ public class OrderService {
     }
 
     @Transactional(rollbackFor = Exception.class)
-    public Order createOrder(CreateOrderRequest request) {
-        Order order = Order.create(request.customerEmail());
+    public Order createOrder(CreateOrderCommand command) {
+        Order order = Order.create(command.customerId(), command.email(), command.currency());
         order = orderRepository.save(order);
         auditService.logCreation(order);  // same transaction; no success record on rollback
         return order;
     }
 
     @Transactional(rollbackFor = Exception.class)
-    public void cancel(UUID id) {
+    public void cancel(Long id) {
         Order order = orderRepository.findById(id)
             .orElseThrow(() -> new OrderNotFoundException(id));
-        order.cancel();
+        order.cancel("cancelled on request");
         auditService.logCancellation(order);
     }
 }

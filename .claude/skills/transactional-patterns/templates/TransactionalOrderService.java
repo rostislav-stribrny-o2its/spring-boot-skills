@@ -1,7 +1,7 @@
 package com.example.order.service;
 
-import com.example.order.dto.request.CreateOrderRequest;
-import com.example.order.entity.Order;
+import com.example.order.service.command.CreateOrderCommand;   // domain input, mapped from the generated …Dto
+import com.example.order.domain.Order;
 import com.example.order.exception.OrderNotFoundException;
 import com.example.order.repository.OrderRepository;
 import lombok.RequiredArgsConstructor;
@@ -12,8 +12,6 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
-import java.util.UUID;
-
 @Slf4j
 @Service
 @RequiredArgsConstructor
@@ -21,10 +19,10 @@ import java.util.UUID;
 public class TransactionalOrderService {
 
     private final OrderRepository orderRepository;
-    private final OrderEventPublisher eventPublisher;
+    private final OrderAuditWriter auditWriter;
 
     // Read-only hint; replica routing requires separate infrastructure.
-    public Order findById(UUID id) {
+    public Order findById(Long id) {
         return orderRepository.findById(id)
             .orElseThrow(() -> new OrderNotFoundException(id));
     }
@@ -36,19 +34,19 @@ public class TransactionalOrderService {
 
     // Override: write transaction with explicit rollback for checked exceptions
     @Transactional(rollbackFor = Exception.class)
-    public Order createOrder(CreateOrderRequest request) {
-        Order order = Order.create(request.customerEmail());
+    public Order createOrder(CreateOrderCommand command) {
+        Order order = Order.create(command.customerId(), command.email(), command.currency());
         order = orderRepository.save(order);
-        eventPublisher.publishOrderCreated(order);
+        auditWriter.publishOrderCreated(order);
         return order;
     }
 
     // Override: write transaction
     @Transactional(rollbackFor = Exception.class)
-    public void cancel(UUID id) {
+    public void cancel(Long id) {
         Order order = findById(id);
-        order.cancel();
-        eventPublisher.publishOrderCancelled(order);
+        order.cancel("cancelled on request");
+        auditWriter.publishOrderCancelled(order);
     }
 }
 
@@ -60,7 +58,7 @@ public class TransactionalOrderService {
 @Slf4j
 @Service
 @RequiredArgsConstructor
-class OrderEventPublisher {
+class OrderAuditWriter {
 
     private final AuditLogRepository auditLogRepository;
 
