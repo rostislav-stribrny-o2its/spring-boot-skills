@@ -2,16 +2,19 @@
 name: transactional-patterns
 description: >
   Use when defining or debugging Spring Boot 4 database transaction boundaries, rollback,
-  propagation, optimistic-lock retries, or commit-bound events. For duplicate HTTP
-  commands use idempotency-patterns; for reactive transactions use webflux-reactive-patterns.
+  propagation, optimistic-lock retries with Spring Data JDBC, streaming reads inside a
+  transaction, or commit-bound events. For duplicate HTTP commands use idempotency-patterns.
 ---
 
 # Transactional Patterns
 
 ## Establish the boundary
 
-- Inspect the project's Boot/Framework version, transaction manager, persistence technology,
-  rollback configuration and caller before changing propagation.
+- Inspect the project's Boot/Framework version, transaction manager, rollback configuration
+  and caller before changing propagation. Persistence in the Elysium Java base is Spring Data
+  JDBC (aggregate writes) plus `JdbcClient` (reads) on one `DataSourceTransactionManager`;
+  there is no JPA persistence context, no lazy loading and no dirty checking — a change is
+  written only when `save(...)` is called.
 - Place multi-step business transactions at the application/service boundary. Preserve
   Spring Data repository transactions; repository annotations are not inherently wrong.
 - Default propagation is `REQUIRED` — joins existing transaction or creates one
@@ -32,12 +35,12 @@ examples when editing a service.
 public class OrderService {
 
     @Transactional // overrides readOnly for writes
-    public Order createOrder(CreateOrderRequest request) {
-        inventoryService.reserve(request.items()); // participates in same TX
-        return orderRepository.save(Order.from(request));
+    public Order createOrder(CreateOrderCommand command) { // domain input, mapped from the generated …Dto
+        inventoryService.reserve(command.items()); // participates in same TX
+        return orderRepository.save(Order.from(command));
     }
 
-    public Optional<Order> findById(UUID id) {
+    public Optional<Order> findById(Long id) {
         return orderRepository.findById(id); // readOnly = true inherited
     }
 }
@@ -91,12 +94,12 @@ public void processOrder(Order order) {
 @Service
 public class OrderService {
     @Transactional
-    public void processAll(List<UUID> ids) {
+    public void processAll(List<Long> ids) {
         ids.forEach(id -> this.processSingle(id)); // bypasses proxy!
     }
 
     @Transactional(propagation = Propagation.REQUIRES_NEW)
-    public void processSingle(UUID id) { ... } // never creates new TX
+    public void processSingle(Long id) { ... } // never creates new TX
 }
 
 // ✅ FIX — extract the independently transactional operation to another bean
@@ -106,7 +109,7 @@ public class OrderService {
     private final OrderProcessor orderProcessor; // separate bean
 
     @Transactional
-    public void processAll(List<UUID> ids) {
+    public void processAll(List<Long> ids) {
         ids.forEach(id -> orderProcessor.processSingle(id)); // goes through proxy
     }
 }
@@ -119,33 +122,45 @@ public class OrderService {
 // Check project-wide rollback configuration before adding per-method rules.
 
 @Transactional(rollbackFor = InsufficientInventoryException.class) // checked exception
-public Order createOrder(CreateOrderRequest request) throws InsufficientInventoryException {
+public Order createOrder(CreateOrderCommand command) throws InsufficientInventoryException {
     ...
 }
 
 ```
 
-Never use `noRollbackFor` to recover from `OptimisticLockException`: the persistence
-provider marks the transaction rollback-only. Roll it back and retry the whole unit of
-work in a fresh transaction, with a bounded policy and a fresh entity read.
+Never use `noRollbackFor` or a `catch` inside the transaction to recover from an optimistic-lock
+conflict (`OptimisticLockingFailureException`): the data read in this transaction is stale. Roll it
+back and retry the whole unit of work in a fresh transaction, with a bounded policy and a fresh
+aggregate read.
 
 ## Optimistic Locking
 
+Spring Data JDBC checks the `@Version` column of the aggregate root on every `save(...)`:
+the `UPDATE … WHERE id = ? AND version = ?` affects no row when another transaction changed the
+aggregate in between, and the repository throws `OptimisticLockingFailureException`.
+
 ```java
-@Entity
-public class Order {
-    @Version
-    private Long version; // Hibernate handles conflicts automatically
+@Table("customer_order")
+public class OrderEntity {           // persisted aggregate root (Spring Data JDBC, no JPA annotations)
+    @Id private Long id;
+    @Version private Long version;   // matches the version column of the table
+    // ...
 }
 
 // Handles concurrent updates
 @Transactional
-public Order updateStatus(UUID id, OrderStatus newStatus) {
-    Order order = orderRepository.findById(id).orElseThrow();
-    order.updateStatus(newStatus); // conflict can surface at flush or commit
-    return orderRepository.save(order);
+public Order updateStatus(Long id, OrderStatus newStatus) {
+    Order order = orderRepository.findById(id).orElseThrow(); // domain object, carries the version
+    order.updateStatus(newStatus);
+    return orderRepository.save(order); // mapped to OrderEntity; conflict surfaces HERE, at save
 }
 ```
+
+The domain object carries the version it was read with; the persistence mapper copies it to the
+entity, so the check compares against what this unit of work actually read.
+
+The whole aggregate (root + `@MappedCollection` children) is written and versioned together;
+changes to a child entity must go through the root and its `save(...)`.
 
 ## Retrying Transient Failures
 
@@ -164,9 +179,9 @@ public class OrderStatusFacade {
 
     private final OrderService orderService; // separate bean — retry must wrap the TX
 
-    @Retryable(includes = ObjectOptimisticLockingFailureException.class,
+    @Retryable(includes = OptimisticLockingFailureException.class,
                maxRetries = 3, delay = 50, jitter = 25)
-    public Order updateStatus(UUID id, OrderStatus newStatus) {
+    public Order updateStatus(Long id, OrderStatus newStatus) {
         return orderService.updateStatus(id, newStatus); // fresh @Transactional per attempt
     }
 }
@@ -181,6 +196,30 @@ Use the [version-specific retry guidance](../resilience-retry/SKILL.md) for depe
 and annotation imports. A retrying facade must not already hold a transaction that each
 attempt's `REQUIRED` method would join.
 
+## Streaming Reads Need a Transaction
+
+PostgreSQL's JDBC driver streams a result set (instead of loading every row into memory) only
+when autocommit is off — i.e. inside a transaction — **and** a fetch size is set. A query that
+returns a `Stream` must therefore be consumed inside a `@Transactional` method, in
+try-with-resources, and the result must be complete before the method returns:
+
+```java
+@Transactional(readOnly = true)
+public ExportSummary exportOrders(LocalDate day, OrderCsvWriter writer) {
+    try (Stream<OrderRow> rows = orderReadRepository.streamByDay(day)) { // fetch size set
+        rows.map(OrderCsvLine::from).forEach(writer::write);                // row by row
+    }
+    return writer.summary(); // only the finished result leaves the transaction
+}
+```
+
+- Set the fetch size once: `spring.jdbc.template.fetch-size` (used by the auto-configured
+  `JdbcTemplate` behind `JdbcClient`), or on the query.
+- The stream must never outlive the transaction that opened it: whoever consumes it (the
+  service, or the API delegate it is passed to) runs inside that transaction, and the
+  connection is released only after the try-with-resources block closes the stream.
+- Query details (`JdbcClient`, keyset pagination, projections) belong to the `jdbc-client-reads` skill.
+
 ## Distributed Transactions (Saga Pattern)
 
 A saga coordinates durable local steps; wrapping remote calls in `@Transactional`
@@ -194,9 +233,9 @@ does not implement one.
 
 Do not save failure state and then throw a rollback-triggering exception from the same
 transaction: that erases the state. Recovery must resume from durable state after a crash.
-Use the project's existing workflow mechanism; see
-[messaging/outbox](../event-driven-messaging/SKILL.md) and
-[idempotency](../idempotency-patterns/SKILL.md) for delivery and duplicate effects.
+Use the project's existing workflow mechanism. The Elysium base has no message broker: durable
+work and outgoing commands go through a job/outbox table in PostgreSQL, picked up with
+`FOR UPDATE SKIP LOCKED`; see [idempotency](../idempotency-patterns/SKILL.md) for duplicate effects.
 
 ## Side Effects After Commit
 
@@ -208,7 +247,7 @@ a failed delivery.
 ```java
 // Publisher — inside the TX
 @Transactional
-public Order place(UUID id) {
+public Order place(Long id) {
     Order order = orderRepository.findById(id).orElseThrow();
     order.place();
     eventPublisher.publishEvent(new OrderPlaced(order.getId())); // published now; listener defers handling
@@ -241,6 +280,9 @@ engine for isolation and contention tests. A test-wide rollback can hide after-c
 - Agent uses readOnly for replica routing or write protection - neither follows from the flag alone.
 - Agent commits success audit entries with REQUIRES_NEW - commit them with the business mutation.
 - Agent suppresses optimistic-lock rollback - retry in a fresh transaction.
+- Agent uses JPA idioms (`@Entity`, `EntityManager`, dirty checking, `ObjectOptimisticLockingFailureException`) - the base has no JPA; aggregates are written by Spring Data JDBC `save(...)` and conflicts raise `OptimisticLockingFailureException`.
+- Agent expects a modified aggregate to be written at commit without `save(...)` - Spring Data JDBC has no dirty checking.
+- Agent lets a `Stream` outlive its transaction or reads it without try-with-resources - the transaction must span the consumer; set a fetch size.
 - Agent calls `@Transactional` methods on `this` — self-invocation bypasses proxy
 - Agent expects checked exceptions to rollback — must add `rollbackFor`
 - Agent uses `@Transactional` on `private` methods — Spring proxy can't intercept
@@ -251,4 +293,12 @@ engine for isolation and contention tests. A test-wide rollback can hide after-c
 
 - [Spring transaction propagation](https://docs.spring.io/spring-framework/reference/data-access/transaction/declarative/tx-propagation.html)
 - [TransactionalEventListener lifecycle](https://docs.spring.io/spring-framework/docs/current/javadoc-api/org/springframework/transaction/event/TransactionalEventListener.html)
-- [Jakarta Persistence optimistic-lock rollback semantics](https://jakarta.ee/specifications/persistence/3.2/apidocs/jakarta.persistence/jakarta/persistence/optimisticlockexception)
+- [Spring Data JDBC — optimistic locking](https://docs.spring.io/spring-data/relational/reference/jdbc/entity-persistence.html#jdbc.entity-persistence.optimistic-locking)
+
+## Provenance
+
+Adapted for the Elysium Java base (JDK 25, Spring Boot 4, Spring Data JDBC + `JdbcClient`, PostgreSQL 18).
+Source: [rrezartprebreza/spring-boot-skills](https://github.com/rrezartprebreza/spring-boot-skills),
+`skills/spring-boot-4/transactional-patterns`, MIT License, © Rrezart Prebreza.
+Changes: optimistic locking with Spring Data JDBC instead of JPA/Hibernate, streaming reads inside a
+transaction, outbox in PostgreSQL instead of a broker, `Long` IDs.

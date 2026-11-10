@@ -1,24 +1,25 @@
-// ❌ BAD — anemic model, no invariant enforcement, no typed IDs, no events
+// ❌ BAD — JPA entity used as the domain model, anemic, no invariant enforcement, no events
 
-@Entity
+@Entity                                      // JPA — not part of the stack (Spring Data JDBC only)
 @Data                                        // generates public setters — anyone can mutate state
 @NoArgsConstructor                           // public no-arg constructor allows invalid objects
 public class Order {
 
     @Id
-    @GeneratedValue(strategy = GenerationType.IDENTITY)
-    private Long id;                         // Long ID — not a typed value object
+    @GeneratedValue(strategy = GenerationType.UUID)
+    private UUID id;                         // IDs are bigint database identities (Long ≤ 2^53−1)
 
-    private Long customerId;                 // Long — should be CustomerId value object
+    @ManyToOne(fetch = FetchType.LAZY)
+    private Customer customer;               // object reference across aggregates — reference by ID
 
     private String customerEmail;            // raw String — should be EmailAddress value object
 
-    @Enumerated(EnumType.ORDINAL)            // ORDINAL breaks if enum is reordered
-    private OrderStatus status;
+    @Enumerated(EnumType.ORDINAL)            // ORDINAL breaks if enum is reordered;
+    private OrderStatus status;              //   statuses are a lookup table with FK
 
-    private BigDecimal total;                // raw BigDecimal — should be Money value object
+    private double total;                    // binary floating point for money — use BigDecimal
 
-    @OneToMany(mappedBy = "order")           // missing cascade, orphanRemoval
+    @OneToMany(mappedBy = "order")           // children loaded lazily, saved separately
     private List<OrderItem> items;           // not initialized — NPE risk
 
     // No behavior methods — all logic will live in service:

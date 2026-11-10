@@ -1,19 +1,22 @@
-// ✅ GOOD — rich domain model, typed IDs, behavior methods, domain events, no public setters
+// ✅ GOOD — rich domain model, behavior methods, domain events, no public setters.
+// Plain domain class: no Spring Data / JPA / Jackson annotations. It is persisted as
+// OrderEntity (Spring Data JDBC) through OrderPersistenceMapper (MapStruct).
 
 public class Order {
 
-    private final OrderId id;
-    private final CustomerId customerId;
+    private final Long id;                   // null until the first save (database identity)
+    private final Long version;              // read version, copied to the entity for @Version
+    private final Long customerId;           // other aggregate referenced by ID
     private final EmailAddress customerEmail;
     private final Currency currency;
     private OrderStatus status;
     private Money total;
     private final List<OrderItem> items = new ArrayList<>();
-    @Transient
     private final List<Object> domainEvents = new ArrayList<>();
 
-    private Order(OrderId id, CustomerId customerId, EmailAddress customerEmail, Currency currency) {
-        this.id = Objects.requireNonNull(id);
+    private Order(Long id, Long version, Long customerId, EmailAddress customerEmail, Currency currency) {
+        this.id = id;
+        this.version = version;
         this.customerId = Objects.requireNonNull(customerId);
         this.customerEmail = Objects.requireNonNull(customerEmail);
         this.currency = Objects.requireNonNull(currency);
@@ -22,12 +25,12 @@ public class Order {
     }
 
     // Static factory — enforces valid initial state
-    public static Order create(CustomerId customerId, EmailAddress email, Currency currency) {
-        return new Order(OrderId.generate(), customerId, email, currency);
+    public static Order create(Long customerId, EmailAddress email, Currency currency) {
+        return new Order(null, null, customerId, email, currency);   // ID assigned by the database
     }
 
     // Behavior methods enforce invariants
-    public void addItem(ProductId productId, String name, int quantity, Money unitPrice) {
+    public void addItem(Long productId, String name, int quantity, Money unitPrice) {
         if (status != OrderStatus.DRAFT)
             throw new OrderNotModifiableException(id);
         if (quantity <= 0)
@@ -67,15 +70,16 @@ public class Order {
     }
 
     // No public setters — state changes only through behavior methods
-    public OrderId getId() { return id; }
-    public CustomerId getCustomerId() { return customerId; }
+    public Long getId() { return id; }
+    public Long getVersion() { return version; }
+    public Long getCustomerId() { return customerId; }
     public OrderStatus getStatus() { return status; }
     public Money getTotal() { return total; }
     public List<OrderItem> getItems() { return Collections.unmodifiableList(items); }
 }
 
-// Typed ID — value object
-public record OrderId(UUID value) {
-    public static OrderId generate() { return new OrderId(UUID.randomUUID()); }
-    public static OrderId of(UUID value) { return new OrderId(Objects.requireNonNull(value)); }
+// Optional typed ID inside the domain (needs Spring Data JDBC converters if used on the entity);
+// never generated in Java — the value comes from the database identity.
+public record OrderId(Long value) {
+    public OrderId { Objects.requireNonNull(value); }
 }
