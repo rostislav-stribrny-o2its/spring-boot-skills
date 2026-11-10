@@ -114,13 +114,13 @@ in `design-postgres-tables`.
 ## Safe Migration Patterns
 
 ```sql
--- ✅ Safe: add nullable column
+-- Safe: add nullable column
 ALTER TABLE customer_order ADD COLUMN notes text;
 
--- ✅ Safe: add column with a constant default (no table rewrite)
+-- Safe: add column with a constant default (no table rewrite)
 ALTER TABLE customer_order ADD COLUMN priority integer NOT NULL DEFAULT 0;
 
--- ✅ Safe: rename legacy_email → customer_email via expand → migrate → contract, across deploys
+-- Safe: rename legacy_email → customer_email via expand → migrate → contract, across deploys
 -- (illustrative version numbers; the CONCURRENTLY index below is V00006)
 -- Step 1 (V00005): add new column (nullable — old instances keep inserting without it)
 ALTER TABLE customer_order ADD COLUMN customer_email text;
@@ -139,7 +139,7 @@ ALTER TABLE customer_order ALTER COLUMN customer_email SET NOT NULL;
 -- Step 5 (V00009, after no deployed code reads legacy_email): drop it
 ALTER TABLE customer_order DROP COLUMN legacy_email;
 
--- ✅ Safe: add index CONCURRENTLY (no write lock) — TWO rules, both required:
+-- Safe: add index CONCURRENTLY (no write lock) — TWO rules, both required:
 -- 1. Put it ALONE in its own migration file. Flyway detects CONCURRENTLY as
 --    non-transactional; mixed with any other statement the migration is rejected:
 --    "Detected both transactional and non-transactional statements".
@@ -150,11 +150,11 @@ ALTER TABLE customer_order DROP COLUMN legacy_email;
 -- V00006__index_customer_order_email.sql (after V00005 adds the column)
 CREATE INDEX CONCURRENTLY customer_order_customer_email_idx ON customer_order (customer_email);
 
--- ❌ Dangerous: rename column directly while old code is running (breaks the running app);
+-- Dangerous: rename column directly while old code is running (breaks the running app);
 --    a direct RENAME is only acceptable when no deployed code uses the column yet
 ALTER TABLE customer_order RENAME COLUMN customer_id TO buyer_id;
 
--- ❌ Dangerous: NOT NULL without default on a table with rows
+-- Dangerous: NOT NULL without default on a table with rows
 ALTER TABLE customer_order ADD COLUMN priority integer NOT NULL; -- fails on existing rows
 ```
 

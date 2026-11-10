@@ -1,4 +1,4 @@
--- ❌ BAD — V4_add_column.sql
+-- BAD — V4_add_column.sql
 --    single underscore and a non-padded version: Flyway skips the file,
 --    and versions must be five digits (V00004__…)
 

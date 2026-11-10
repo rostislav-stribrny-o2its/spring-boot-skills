@@ -1,4 +1,4 @@
-// ✅ GOOD — rich domain model, behavior methods, domain events, no public setters.
+// GOOD — rich domain model, behavior methods, domain events, no public setters.
 // Plain domain class: no Spring Data / JPA / Jackson annotations. It is persisted as
 // OrderEntity (Spring Data JDBC) through OrderPersistenceMapper (MapStruct).
 

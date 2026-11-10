@@ -1,4 +1,4 @@
-// ❌ BAD — hand-written versioned URL beside a generated contract-first API,
+// BAD — hand-written versioned URL beside a generated contract-first API,
 // bypassing both the contract and Framework 7 version mapping
 @RestController
 final class OrderController {

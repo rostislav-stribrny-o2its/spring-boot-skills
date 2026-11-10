@@ -1,4 +1,4 @@
-// ✅ GOOD (hand-written API only) — version declared on the mapping, resolved centrally.
+// GOOD (hand-written API only) — version declared on the mapping, resolved centrally.
 // In a contract-first API the version is declared in the contract and controllers are generated.
 @RestController
 @RequestMapping("/api/orders")
