@@ -124,10 +124,15 @@ explicit status endpoint.
 Opereta uses the **application-roles model** with Keycloak (other OIDC issuers only by configuration):
 
 - **Principal** = claim `personal_number` (`app.security.principal-claim: personal_number`). It comes only from a trusted source and is matched against the HR master data; the link between the identity-provider account and the personal number never changes silently.
-- **Entry role** from the token: one stable role name (e.g. `opereta-user`) granted by the single entry group in AD. It proves only "may enter", never a business permission. Check the client role and the `azp` claim.
+- **Token claims:** `aud` = `opereta-api`, `azp` = `opereta-spa`, `personal_number`, client entry role `opereta-user` (granted by the single entry group in AD). The entry role proves only "may enter", never a business permission. No personal data (name, e-mail) in the access token — the frontend reads nothing from the token and gets everything from `/api/me`.
 - **Business roles** come from the application database. `UserRoleService.findPairedRoles(personalNumber)` returns `Optional<Set<String>>`: empty = the person is not paired with a record of the application.
 - **One converter** builds the authorities: `ROLE_OPERETA_USER` from the entry role; if paired, `ROLE_PAIRED` plus the business roles from the database. Short cache (a ban recorded in the database must take effect quickly; access tokens are short-lived).
-- **Authorization:** `ROLE_OPERETA_USER` reaches only `/api/me/status` (the status screen of an unpaired account, audited); every other endpoint requires `ROLE_PAIRED` **and** a concrete business role via `@PreAuthorize`.
+- **One endpoint `/api/me`** (decided 9. 11. 2026; there is no separate status endpoint): the entry role is enough to call it, and the backend decides from the Opereta database:
+  - `200` with the identity (`user.id` as `int64`, `personalNumber` as a separate field, `roles` with `code`/`name`/`source`, display-only `permissions`);
+  - `403` `application/problem+json` with `type` `/problems/no-access` and `reason` `UNPAIRED` · `NO_ROLE` · `SUSPENDED`.
+- **Suspension on any other call:** when the backend finds the person suspended (e.g. a ban after the end of employment, checked in the database on every request) it also returns `403` `/problems/no-access` with `reason: SUSPENDED`, not a generic access-denied problem, so the frontend can switch to the "no access" screen mid-session.
+- **Authorization:** `ROLE_OPERETA_USER` reaches only `/api/me`; every other endpoint requires `ROLE_PAIRED` **and** a concrete business role via `@PreAuthorize`. `permissions` in `/api/me` are for display only — the backend authorizes every endpoint itself.
+- **Invalid or expired token:** `401` with `WWW-Authenticate: Bearer error="invalid_token"` and an empty body (Spring Security default).
 - **Role administration rules** (enforced in the service, tested): nobody changes their own roles; an administrator does not change another administrator's roles; every role change is audited.
 - **Environment variables** (never constants): `OPERETA_OIDC_ISSUER_URI`, `OPERETA_OIDC_JWKS_URI`, `OPERETA_OIDC_AUDIENCE`, `OPERETA_OIDC_CLIENT_ID`, mapped to the Spring properties shown below.
 - **Same origin:** one hostname per environment, the proxy routes `/auth` → Keycloak, `/api` → backend, `/` → frontend; CORS stays disabled.
@@ -280,7 +285,8 @@ before treating another minor version or an illustrative snippet as verified.
 
 ## Gotchas
 - Agent hard-codes issuer, JWK URL, audience or CORS origins — all come from environment variables
-- (Opereta) Agent grants business roles from token claims or lets `ROLE_OPERETA_USER` reach anything but `/api/me/status` — business roles come from the database and require `ROLE_PAIRED`
+- (Opereta) Agent grants business roles from token claims or lets `ROLE_OPERETA_USER` reach anything but `/api/me` — business roles come from the database and require `ROLE_PAIRED`
+- (Opereta) Agent adds a separate `/api/me/status` endpoint or returns a generic access-denied problem for a suspended person — one `/api/me`, and `403` `/problems/no-access` with `reason` everywhere
 - (Opereta) Agent identifies people by `sub`, email or username — the principal is `personal_number`
 - Agent enables CORS with `localhost:3000` or `*` in a same-origin deployment — leave CORS disabled unless the frontend really runs on another origin
 - Agent maps business roles from the token AND from the database — pick one model; with application roles the token only identifies the person
@@ -304,7 +310,7 @@ before treating another minor version or an illustrative snippet as verified.
 Adapted for the Elysium Java base (JDK 25, Spring Boot 4, Spring Security 7).
 Source: [rrezartprebreza/spring-boot-skills](https://github.com/rrezartprebreza/spring-boot-skills),
 `skills/spring-boot-4/oauth2-resource-server`, MIT License, © Rrezart Prebreza.
-Opereta layer: application roles from the database, `personal_number` principal, paired accounts, `OPERETA_OIDC_*` variables.
+Opereta layer: application roles from the database, `personal_number` principal, paired accounts, one `/api/me` with `403` `/problems/no-access` reasons, `OPERETA_OIDC_*` variables.
 Changes: issuer/audience/principal claim and CORS from the environment, same-origin default
 without CORS, token roles vs. application roles, `Long` IDs, controller example replaced by a
 service reading the identity (generated controllers).
