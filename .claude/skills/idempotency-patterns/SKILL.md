@@ -40,8 +40,8 @@ Keep replay headers allowlisted; do not persist cookies, bearer tokens or hop-by
 
 A database transaction cannot atomically include an HTTP payment or email. Write an outbox record
 (a row in a job table in PostgreSQL) with the business mutation and let a retryable worker —
-`@Scheduled` with ShedLock, claiming rows with `FOR UPDATE SKIP LOCKED` — perform the external
-effect using the provider's idempotency support. The base has no message broker. Reconcile uncertain outcomes before retrying irreversible effects.
+a `@Scheduled` poller claiming rows with `FOR UPDATE SKIP LOCKED` (safe on all replicas, ShedLock
+optional; see `pg-job-queue`) — perform the external effect using the provider's idempotency support. The base has no message broker. Reconcile uncertain outcomes before retrying irreversible effects.
 For queued work (job/outbox rows), record a unique job/processor pair and apply the effect in one transaction;
 mark the row done only in that commit. Retry failed rows with backoff and move rows that keep failing to a
 `failed` status with the error, instead of retrying forever.
