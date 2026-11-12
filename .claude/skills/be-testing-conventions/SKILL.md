@@ -102,7 +102,7 @@ permissive test configuration to get green tests.
   or commits.
 - Test persons use personal numbers from the reserved range (`OPERETA_TEST_PERSONAL_NUMBER_RANGE`);
   never real personal numbers.
-- Add the Opereta rows of the security matrix from `spring-testing-security` (unpaired account,
+- Add the Opereta rows of the security matrix from `be-spring-testing-security` (unpaired account,
   suspension, role administration).
 
 ## Dependencies (test scope)

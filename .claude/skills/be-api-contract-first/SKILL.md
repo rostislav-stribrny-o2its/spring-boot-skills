@@ -225,7 +225,7 @@ item schema, enums with `enumAsRef`, polymorphic bases with a discriminator, no 
   shape, CI compares the documentation anchor with the spec by this ID.
 - Names in the contract are English; descriptions are Czech (application documentation language).
 - The frontend reads nothing from the token; identity, roles and display permissions come from
-  `/api/me` (see `oauth2-resource-server`).
+  `/api/me` (see `be-oauth2-resource-server`).
 
 ## Gotchas
 - Agent edits the OpenAPI JSON/YAML by hand — change the API model and rebuild
