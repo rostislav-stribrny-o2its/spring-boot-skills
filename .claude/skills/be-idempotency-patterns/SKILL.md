@@ -1,7 +1,7 @@
 ---
-name: idempotency-patterns
+name: be-idempotency-patterns
 description: >
-  Use when making retried HTTP commands or message processing safe against duplicate effects, including database-backed request keys, payload conflicts and concurrent retries. Do not apply caching as a substitute for business idempotency.
+  Java/Spring backend: use when making retried HTTP commands or message processing safe against duplicate effects, including database-backed request keys, payload conflicts and concurrent retries. Do not apply caching as a substitute for business idempotency.
 ---
 
 # Idempotency Patterns
@@ -41,7 +41,7 @@ Keep replay headers allowlisted; do not persist cookies, bearer tokens or hop-by
 A database transaction cannot atomically include an HTTP payment or email. Write an outbox record
 (a row in a job table in PostgreSQL) with the business mutation and let a retryable worker —
 a `@Scheduled` poller claiming rows with `FOR UPDATE SKIP LOCKED` (safe on all replicas, ShedLock
-optional; see `pg-job-queue`) — perform the external effect using the provider's idempotency support. The base has no message broker. Reconcile uncertain outcomes before retrying irreversible effects.
+optional; see `be-pg-job-queue`) — perform the external effect using the provider's idempotency support. The base has no message broker. Reconcile uncertain outcomes before retrying irreversible effects.
 For queued work (job/outbox rows), record a unique job/processor pair and apply the effect in one transaction;
 mark the row done only in that commit. Retry failed rows with backoff and move rows that keep failing to a
 `failed` status with the error, instead of retrying forever.
@@ -62,7 +62,7 @@ Use PostgreSQL in Testcontainers (same major version as production) for lock and
 - Agent checks existence then inserts - enforce uniqueness in the database.
 - Agent uses a JVM map or Redis TTL as the only business guard - coordinate with the actual write transaction.
 - Agent replays another principal's result - scope the key and re-authorize.
-- Agent uses `uuid` keys, `varchar(n)` or a tenant column copied from examples - follow `design-postgres-tables`: `text` with a length CHECK, `bigint` IDs; the base has no tenants.
+- Agent uses `uuid` keys, `varchar(n)` or a tenant column copied from examples - follow `db-design-postgres-tables`: `text` with a length CHECK, `bigint` IDs; the base has no tenants.
 - Agent retries an external effect after a timeout blindly - reconcile or use provider idempotency.
 - Agent deletes keys too early - document the retry window and expiry semantics.
 
@@ -78,4 +78,4 @@ Adapted for the Elysium Java base (JDK 25, Spring Boot 4, Spring Data JDBC + `Jd
 Source: [rrezartprebreza/spring-boot-skills](https://github.com/rrezartprebreza/spring-boot-skills),
 `skills/spring-boot-4/idempotency-patterns`, MIT License, © Rrezart Prebreza.
 Changes: scoped by principal (no tenants), outbox as a PostgreSQL job table without a broker, DDL types
-per `design-postgres-tables`.
+per `db-design-postgres-tables`.

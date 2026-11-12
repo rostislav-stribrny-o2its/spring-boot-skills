@@ -1,5 +1,5 @@
 ---
-name: backend-layers
+name: be-backend-layers
 description: >
   Use when creating or changing any class of a Spring Boot 4 backend — API delegates, services,
   domain classes, repositories, mappers, configuration. Defines the layers (generated
@@ -11,7 +11,7 @@ description: >
 # Backend Layers
 
 The Elysium Java base is a **layered** application. Each layer has one job; ArchUnit tests
-enforce the direction (see `archunit-rules`).
+enforce the direction (see `be-archunit-rules`).
 
 ```
 generated controller   ← from the contract (api-contract-first); never edited
@@ -39,7 +39,7 @@ typeConversionPolicy = ReportingPolicy.ERROR)` — a forgotten field or a lossy 
 compile error (ArchUnit checks that every mapper uses it):
 - `…ApiMapper` — `…Dto` ↔ domain (and `…Row` → `…Dto` on the read path), in the API layer;
 - `…PersistenceMapper` — domain ↔ `…Entity`, in the persistence layer.
-No static `from(...)` factories on DTOs, no hand-written mapping loops (see `mapstruct-dto-layers`).
+No static `from(...)` factories on DTOs, no hand-written mapping loops (see `be-mapstruct-dto-layers`).
 
 ## Write path and read path
 
@@ -80,13 +80,13 @@ List<OrderLineDto> lines = orderQueries.exportOrders(day, rows -> rows.map(mappe
 **`@Service`**
 - All business logic, rules and orchestration; `@Transactional` of your own code lives here —
   never on your delegates or your `@Repository` classes. The built-in transactional behavior of
-  Spring Data repositories stays untouched (see `transactional-patterns`).
+  Spring Data repositories stays untouched (see `be-transactional-patterns`).
 - Takes and returns domain types or commands — never `…Dto`, `…Entity`, `HttpServletRequest` or
   `ResponseEntity`.
 - One service per aggregate or use-case area, not god classes; a separate query service for the
   read side is fine.
 - Retries and concurrency limits with Framework 7 `@Retryable` / `@ConcurrencyLimit`
-  (`@EnableResilientMethods`), see `resilience-retry`.
+  (`@EnableResilientMethods`), see `be-resilience-retry`.
 
 **`@Repository`**
 - Write side: wraps a Spring Data JDBC repository of the aggregate root (`ListCrudRepository<OrderEntity, Long>`)
@@ -97,7 +97,7 @@ List<OrderLineDto> lines = orderQueries.exportOrders(day, rows -> rows.map(mappe
 
 **Database**
 - Schema only through Flyway; constraints are declarative; no triggers or procedures for business
-  logic (see `flyway-migrations`, `design-postgres-tables`).
+  logic (see `db-flyway-migrations`, `db-design-postgres-tables`).
 
 ## Packages
 
@@ -118,7 +118,7 @@ Cross-module calls go service → service (never into another module's persisten
 
 - Every value that differs between environments (URLs, credentials, limits, schedules, feature
   switches) comes from configuration bound to a validated `@ConfigurationProperties` record —
-  never a constant in code, never `@Value` scattered over classes (see `configuration-properties`).
+  never a constant in code, never `@Value` scattered over classes (see `be-configuration-properties`).
 - `@Configuration` classes wire infrastructure only and never depend on services.
 
 ## Cross-cutting rules

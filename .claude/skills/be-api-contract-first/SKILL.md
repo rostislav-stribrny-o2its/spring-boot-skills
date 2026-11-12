@@ -1,5 +1,5 @@
 ---
-name: api-contract-first
+name: be-api-contract-first
 description: >
   Use when designing or changing an HTTP API of a Spring Boot 4 backend: the typed API model
   in Java, the OpenAPI document generated from it, the committed spec under specs/, code
@@ -96,7 +96,7 @@ springdoc, which starts a context. Open points for the prototype:
 
 - Plural, kebab-case resources: `/api/orders`, `/api/order-items`; nesting at most two levels.
 - No success envelope: a response is the resource or a page object defined in the model.
-- Errors are RFC 9457 Problem Details (`application/problem+json`, see `problem-details-rfc9457`);
+- Errors are RFC 9457 Problem Details (`application/problem+json`, see `be-problem-details-rfc9457`);
   every operation declares its error responses in the model.
 
 | Scenario | Status |
@@ -122,7 +122,7 @@ springdoc, which starts a context. Open points for the prototype:
 ### Versioning
 
 Request versioning is configured centrally with Spring Framework 7 and declared in the contract —
-see `api-versioning`.
+see `be-api-versioning`.
 
 ## 5. Code generation (backend)
 

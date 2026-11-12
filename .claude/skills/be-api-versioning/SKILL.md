@@ -1,5 +1,5 @@
 ---
-name: api-versioning
+name: be-api-versioning
 description: >
   Use when versioning a contract-first Spring MVC API in Spring Boot 4 / Spring Framework 7:
   where the version lives in the OpenAPI contract, the one central request resolution
@@ -56,7 +56,7 @@ class ApiVersioningConfig implements WebMvcConfigurer {
 - Versioning is required unless a default is configured or `setVersionRequired(false)` is used;
   for an internal API with one frontend, a default keeps old clients working.
 - Missing or unsupported versions go through the API error contract (Problem Details,
-  see `problem-details-rfc9457`), and the error responses are part of the contract.
+  see `be-problem-details-rfc9457`), and the error responses are part of the contract.
 - Boot properties under `spring.mvc.apiversion.*` can supply the same values; keep the strategy
   in Java configuration when its behavior must be explicit.
 

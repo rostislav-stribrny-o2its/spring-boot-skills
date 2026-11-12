@@ -1,5 +1,5 @@
 ---
-name: production-observability
+name: be-production-observability
 description: >
   Use when adding service-wide Spring Boot 4 Actuator, Micrometer Observation and Tracing,
   OpenTelemetry or OTLP export, structured logging, health probes, dashboards, or alerts. Combine

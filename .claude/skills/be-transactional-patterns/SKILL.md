@@ -1,5 +1,5 @@
 ---
-name: transactional-patterns
+name: be-transactional-patterns
 description: >
   Use when defining or debugging Spring Boot 4 database transaction boundaries, rollback,
   propagation, optimistic-lock retries with Spring Data JDBC, streaming reads inside a
@@ -192,7 +192,7 @@ needs a fresh transaction. Retrying inside the failed transaction re-runs code i
 rollback-only. For hot write paths, `@ConcurrencyLimit(10)` (same package) caps concurrent invocations
 instead of letting contention turn into retry storms.
 
-Use the [version-specific retry guidance](../resilience-retry/SKILL.md) for dependencies
+Use the [version-specific retry guidance](../be-resilience-retry/SKILL.md) for dependencies
 and annotation imports. A retrying facade must not already hold a transaction that each
 attempt's `REQUIRED` method would join.
 
@@ -218,7 +218,7 @@ public ExportSummary exportOrders(LocalDate day, OrderCsvWriter writer) {
 - The stream must never outlive the transaction that opened it: whoever consumes it (the
   service, or the API delegate it is passed to) runs inside that transaction, and the
   connection is released only after the try-with-resources block closes the stream.
-- Query details (`JdbcClient`, keyset pagination, projections) belong to the `jdbc-client-reads` skill.
+- Query details (`JdbcClient`, keyset pagination, projections) belong to the `be-jdbc-client-reads` skill.
 
 ## Distributed Transactions (Saga Pattern)
 
@@ -235,7 +235,7 @@ Do not save failure state and then throw a rollback-triggering exception from th
 transaction: that erases the state. Recovery must resume from durable state after a crash.
 Use the project's existing workflow mechanism. The Elysium base has no message broker: durable
 work and outgoing commands go through a job/outbox table in PostgreSQL, picked up with
-`FOR UPDATE SKIP LOCKED`; see [idempotency](../idempotency-patterns/SKILL.md) for duplicate effects.
+`FOR UPDATE SKIP LOCKED`; see [idempotency](../be-idempotency-patterns/SKILL.md) for duplicate effects.
 
 ## Side Effects After Commit
 
@@ -265,7 +265,7 @@ public void onOrderPlaced(OrderPlaced event) {
 transaction. Delegate database writes to a separate `REQUIRES_NEW` bean. Listener failure
 cannot undo the committed business write; make delivery failures observable and recoverable.
 Without an active transaction the listener is skipped by default. `@Async` does not add
-durable delivery. See [domain events](../domain-driven-design/SKILL.md).
+durable delivery. See [domain events](../be-domain-driven-design/SKILL.md).
 
 ## Verification
 

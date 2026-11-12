@@ -1,5 +1,5 @@
 ---
-name: async-execution
+name: be-async-execution
 description: >
   Use when adding or debugging Spring @Async work, executor saturation, asynchronous failures or lost thread context. Not a substitute for durable jobs or reactive pipelines.
 ---

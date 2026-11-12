@@ -1,5 +1,5 @@
 ---
-name: maven-reactor
+name: be-maven-reactor
 description: >
   Use when creating or changing the Maven build of a Spring Boot 4 backend: the single reactor
   with the API model, the generated spec and the runtime modules, the parent POM (JDK 25, Boot
@@ -129,7 +129,7 @@ parent's `pluginManagement`:
 ```
 
 `typeConversionPolicy` is not a processor option: it is set in the shared `@MapperConfig` that
-every mapper uses (see `backend-layers`).
+every mapper uses (see `be-backend-layers`).
 
 ## What `mvn verify` runs
 

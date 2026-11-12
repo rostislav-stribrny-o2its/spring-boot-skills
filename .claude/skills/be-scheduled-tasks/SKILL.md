@@ -1,5 +1,5 @@
 ---
-name: scheduled-tasks
+name: be-scheduled-tasks
 description: >
   Use when creating or reviewing @Scheduled jobs, cron/time-zone configuration, overlapping runs or multi-instance scheduling. Not for Spring Batch chunk/restart mechanics or arbitrary async dispatch.
 ---

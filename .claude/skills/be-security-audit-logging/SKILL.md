@@ -1,5 +1,5 @@
 ---
-name: security-audit-logging
+name: be-security-audit-logging
 description: >
   Use when designing or reviewing security audit events, their redaction, durable storage,
   integrity, or failure policies in Spring Boot. General metrics and debugging logs belong

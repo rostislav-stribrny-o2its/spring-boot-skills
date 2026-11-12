@@ -1,5 +1,5 @@
 ---
-name: testing-conventions
+name: be-testing-conventions
 description: >
   Use when writing or reviewing tests of a Spring Boot 4 backend on the Elysium Java base:
   which test goes where, requirement tags, naming, one shared Spring context with PostgreSQL
@@ -11,10 +11,10 @@ description: >
 # Testing Conventions
 
 This skill sets the conventions; the techniques are in the testing skills:
-`spring-testing-strategy` (which test type), `spring-testing-fast` (context caching),
-`spring-testing-web` (`MockMvcTester`, `RestTestClient`), `spring-testing-persistence`
-(Spring Data JDBC, `JdbcClient`, Testcontainers), `spring-testing-security`,
-`spring-testing-http-client`, `spring-testing-properties`.
+`be-spring-testing-strategy` (which test type), `be-spring-testing-fast` (context caching),
+`be-spring-testing-web` (`MockMvcTester`, `RestTestClient`), `be-spring-testing-persistence`
+(Spring Data JDBC, `JdbcClient`, Testcontainers), `be-spring-testing-security`,
+`be-spring-testing-http-client`, `be-spring-testing-properties`.
 
 ## Which test where
 
@@ -71,13 +71,13 @@ A value that would lose precision must fail loudly, never be rounded.
 
 ## Architecture tests
 
-ArchUnit rules run in `mvn verify` (see `archunit-rules`): layer direction, no JPA, `@Transactional`
+ArchUnit rules run in `mvn verify` (see `be-archunit-rules`): layer direction, no JPA, `@Transactional`
 only on services, generated API types only in the API layer, persistence types never in the API,
 no lossy number conversions, streams closed.
 
 ## Security regression matrix
 
-For every protected operation (technique in `spring-testing-security`):
+For every protected operation (technique in `be-spring-testing-security`):
 - anonymous → `401`; invalid or expired token → `401`;
 - authenticated without the required authority → `403`;
 - allowed caller → success, with the content asserted;

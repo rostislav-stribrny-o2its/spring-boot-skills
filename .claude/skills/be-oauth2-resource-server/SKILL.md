@@ -1,5 +1,5 @@
 ---
-name: oauth2-resource-server
+name: be-oauth2-resource-server
 description: >
   Use when configuring Spring Boot as an OAuth2 resource server, validating JWTs from
   an external identity provider (Keycloak, Entra ID, Auth0, Okta), extracting claims,
@@ -139,7 +139,7 @@ app:
 ```
 
 Bind `app.security.*` with a validated `@ConfigurationProperties` record (see the
-`configuration-properties` skill). Secrets and per-environment URLs never appear in code
+`be-configuration-properties` skill). Secrets and per-environment URLs never appear in code
 or in committed profile files.
 
 ## CORS

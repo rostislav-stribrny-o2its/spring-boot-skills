@@ -1,5 +1,5 @@
 ---
-name: container-native-deployment
+name: be-container-native-deployment
 description: >
   Use when packaging Spring Boot 4 as an OCI image, JVM container, AOT application, or GraalVM
   native executable. Covers buildpacks, layers, runtime hints, probes, security, and verification.

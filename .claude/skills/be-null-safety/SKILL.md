@@ -1,5 +1,5 @@
 ---
-name: null-safety
+name: be-null-safety
 description: >
   Use when annotating nullability in Spring Boot 4 / Spring Framework 7, migrating to JSpecify,
   integrating Kotlin, or enabling build-time null checks with NullAway.

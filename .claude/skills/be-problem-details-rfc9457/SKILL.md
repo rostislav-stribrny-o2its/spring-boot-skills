@@ -1,5 +1,5 @@
 ---
-name: problem-details-rfc9457
+name: be-problem-details-rfc9457
 description: >
   Use when implementing exception mapping or RFC 9457 error responses in Spring Boot 4.
   Preserve an existing legacy error contract unless migration is requested.

@@ -1,5 +1,5 @@
 ---
-name: flyway-migrations
+name: db-flyway-migrations
 description: >
   Use when creating database migrations, schema changes, reference data (lookup tables),
   or any SQL that modifies database structure. Covers Flyway naming (five-digit versions),
@@ -12,9 +12,9 @@ description: >
 Flyway is the only tool that changes the schema. Hibernate/JPA schema generation is not used
 (the stack has no JPA); nothing creates tables at application start except Flyway.
 
-DDL style (types, keys, lookup tables, normalization) is defined by the `design-postgres-tables`
+DDL style (types, keys, lookup tables, normalization) is defined by the `db-design-postgres-tables`
 skill; this skill covers how a migration is named, written, checked and deployed. Lock levels of
-individual DDL statements and large backfills are in `postgres-database-migration`.
+individual DDL statements and large backfills are in `db-postgres-database-migration`.
 
 ## Dependencies
 
@@ -100,7 +100,7 @@ ALTER TABLE customer_order
 Why these types: IDs are `bigint` with an upper bound of 2^53−1 (`MAXVALUE 9007199254740991`)
 so that they stay exact as JSON numbers in a JavaScript frontend; money and other exact
 decimals are `numeric(p, s)` (mapped to `BigDecimal`), never `real`/`double precision`. Details
-in `design-postgres-tables`.
+in `db-design-postgres-tables`.
 
 ## Reference Data vs. Development Data
 
@@ -195,7 +195,7 @@ Every pull request that touches `db/migration` runs:
    (migrate to its last version, or start from its dump), then apply the new migrations.
    This is the path production takes.
 5. Integration tests run against the migrated PostgreSQL in Testcontainers
-   (see `spring-testing-persistence`).
+   (see `be-spring-testing-persistence`).
 
 ## Onboarding an existing database
 

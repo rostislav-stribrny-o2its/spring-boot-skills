@@ -1,5 +1,5 @@
 ---
-name: resilience-retry
+name: be-resilience-retry
 description: >
   Use when adding retries, backoff, or concurrency limits to Spring Boot 4 / Spring Framework 7
   code with core Retryable and ConcurrencyLimit support. Covers enablement, backoff, proxy limits,

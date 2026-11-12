@@ -1,5 +1,5 @@
 ---
-name: spring-security-review
+name: be-spring-security-review
 description: >
   Use when explicitly reviewing or hardening a Spring Boot application's authorization,
   request handling, or exposed management endpoints. Not a replacement for ordinary JWT

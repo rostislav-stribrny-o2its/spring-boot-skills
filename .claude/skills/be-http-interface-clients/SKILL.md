@@ -1,5 +1,5 @@
 ---
-name: http-interface-clients
+name: be-http-interface-clients
 description: >
   Use when calling external HTTP APIs from Spring Boot 4 / Spring Framework 7 with declarative
   HttpExchange interfaces. Covers ImportHttpServices, grouped base URLs and timeouts, and

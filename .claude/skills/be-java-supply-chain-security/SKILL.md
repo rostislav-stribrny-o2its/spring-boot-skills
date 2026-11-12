@@ -1,5 +1,5 @@
 ---
-name: java-supply-chain-security
+name: be-java-supply-chain-security
 description: >
   Use when reviewing Maven or Gradle dependency risk, SBOM coverage, vulnerability findings,
   or Java release provenance. Covers compatible remediation and CI trust boundaries;

@@ -1,5 +1,5 @@
 ---
-name: configuration-properties
+name: be-configuration-properties
 description: >
   Use when introducing or correcting grouped Spring Boot configuration, typed property binding, validation, profiles or secret injection. Do not rewrite unrelated single-value configuration.
 ---

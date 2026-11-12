@@ -1,5 +1,5 @@
 ---
-name: domain-driven-design
+name: be-domain-driven-design
 description: >
   Use when designing or evolving aggregates, invariants, value objects or domain events in a
   Spring Boot 4 application with a layered architecture and Spring Data JDBC persistence.
@@ -204,8 +204,8 @@ into a job/outbox table in PostgreSQL in the same transaction as the aggregate c
 picks it up with `FOR UPDATE SKIP LOCKED`, with idempotent processing and retry/recovery. The
 base has no message broker. `@Async` changes execution, not durability. Post-commit database
 writes need a new transaction because the original resources may still be bound after
-completion. See [transaction boundaries](../transactional-patterns/SKILL.md) and
-[idempotency](../idempotency-patterns/SKILL.md).
+completion. See [transaction boundaries](../be-transactional-patterns/SKILL.md) and
+[idempotency](../be-idempotency-patterns/SKILL.md).
 
 ## Queries
 
