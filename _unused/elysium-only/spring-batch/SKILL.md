@@ -1,5 +1,5 @@
 ---
-name: spring-batch
+name: be-spring-batch
 description: >
   Use when building batch jobs, ETL pipelines, scheduled imports/exports, or any chunk-oriented
   bulk processing with Spring Batch. Covers the Spring Batch 6 / Boot 4 builder API, resourceless
@@ -184,7 +184,7 @@ public JdbcBatchItemWriter<OrderRow> orderWriter(DataSource dataSource) {
 
 The writer runs **inside the chunk transaction**. Never fire emails, publish to Kafka, or call
 webhooks from a writer — if the chunk rolls back you've already sent it. Bind side effects to the
-job completion instead (see [[transactional-patterns]] and the listener below).
+job completion instead (see [[be-transactional-patterns]] and the listener below).
 
 ## Launching jobs
 
@@ -230,7 +230,7 @@ thread only if you accept the block.
 With the JDBC repository, Spring Batch needs its `BATCH_JOB_INSTANCE`, `BATCH_JOB_EXECUTION`,
 `BATCH_STEP_EXECUTION`, … tables. `initialize-schema: always` is fine for dev/embedded DBs but
 **don't let Batch DDL your production database on startup**. Set `initialize-schema: never` and
-ship the schema as a versioned [[flyway-migrations]] migration (the canonical DDL lives in
+ship the schema as a versioned [[db-flyway-migrations]] migration (the canonical DDL lives in
 `org/springframework/batch/core/schema-*.sql` inside `spring-batch-core`). Upgrading an existing
 Boot 3 database? Batch 6 renamed the `BATCH_JOB_SEQ` sequence to `BATCH_JOB_INSTANCE_SEQ` — the
 project ships migration scripts; add one to your Flyway history.
