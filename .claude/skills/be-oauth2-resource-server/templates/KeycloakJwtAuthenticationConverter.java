@@ -16,8 +16,9 @@ import java.util.Map;
 import java.util.Set;
 
 /**
- * The ONE place that turns a verified Keycloak token into authorities (application-roles model,
- * ADR-00004 points 4-6). Signature, issuer, audience, azp and expiry are already checked by the
+ * The ONE place that turns a verified Keycloak token into authorities (application-roles model:
+ * the token only admits via the entry role; business roles come from the application database).
+ * Signature, issuer, audience, azp and expiry are already checked by the
  * JwtDecoder when this runs. Not yet verified by a build in this repository.
  */
 public final class KeycloakJwtAuthenticationConverter
@@ -38,7 +39,7 @@ public final class KeycloakJwtAuthenticationConverter
 
     @Override
     public AppAuthentication convert(Jwt jwt) {
-        String principal = jwt.getClaimAsString(properties.principalClaim());   // personal_number
+        String principal = jwt.getClaimAsString(properties.principalClaim());   // example: personal_number
         if (principal == null || principal.isBlank()) {
             // OAuth2AuthenticationException -> 401 with WWW-Authenticate: Bearer error="invalid_token"
             throw new InvalidBearerTokenException("Token without the principal claim");
@@ -59,7 +60,7 @@ public final class KeycloakJwtAuthenticationConverter
         return new AppAuthentication(jwt, authorities, principal, decision);
     }
 
-    /** Realm roles plus client roles of the configured client, normalised ("opereta-user" -> "OPERETA_USER"). */
+    /** Realm roles plus client roles of the configured client, normalised (example: "app-user" -> "APP_USER"). */
     private Set<String> tokenRoles(Jwt jwt) {
         Set<String> roles = new HashSet<>();
         addRoles(roles, jwt.getClaimAsMap("realm_access"));

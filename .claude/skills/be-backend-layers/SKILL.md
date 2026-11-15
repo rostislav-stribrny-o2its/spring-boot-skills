@@ -11,7 +11,7 @@ description: >
 # Backend Layers
 
 The backend is **layered**, one predictable pattern in every domain module (ADR-00008 point 6:
-"stejně ve všech doménových modulech"). Each layer has one job; ArchUnit fails the build when a
+the same three object layers in every domain module). Each layer has one job; ArchUnit fails the build when a
 dependency points the wrong way (`be-archunit-rules`).
 
 ```
@@ -60,8 +60,9 @@ app.backend.<module>.persistence              write repositories, …Entity, …
 app.lib.<topic>..                             shared library code (one entry @Configuration)
 ```
 
-A module is a package of code, not a database schema: phase 1 has one backend schema
-(ADR-00008 point 12). SQL and `@Table` names of that schema are unqualified (the connection's
+A module is a package of code, not a database schema: the backend has one schema
+(ADR-00008 point 12; migrations run as the schema owner, the application at runtime under a role
+that may not change the schema). SQL and `@Table` names of that schema are unqualified (the connection's
 `search_path` is the backend schema); tables of schema `integration` are always qualified
 (`db-flyway-migrations`).
 
@@ -83,7 +84,7 @@ mapped is a compile error.
   repository, applies the rule, saves → result domain record → `…ApiMapper` → `OrderDto`;
 - read: API delegate → query service (`@Transactional(readOnly = true)`) → read repository returns
   `…Row` / page of `…Row` → `…ApiMapper` → `…Dto`. Even a read restricts rows to what the user may
-  see (the mechanism is not decided yet — ADR-00008 "Co ADR neurčuje").
+  see (ADR-00008 leaves the mechanism open; it is decided separately — do not invent one).
 
 ## Layer rules
 
@@ -166,6 +167,29 @@ SQL (ADR-00008 point 4).
 **Database** — schema only from Flyway migrations; declarative constraints; no procedures or
 triggers with business logic (`db-flyway-migrations`, `db-design-postgres-tables`).
 
+## Checklist: adding a field
+
+In this order, in one pull request (example: an optional `note`, at most 500 characters, on an
+existing record type):
+
+1. **Description** in `docs/design/backend/<area>/` (or the PR text while that folder is missing):
+   field, type, optional/required, limit, who may write it.
+2. **Model** (`api-model`): the response record; for a writable field also the create/update
+   request records — `be-api-contract-first` and its `fields.md` (`@Size(max = 500)`,
+   required/nullable). `./mvnw -B verify` re-exports `specs/`; commit it.
+3. **Migration**: `V<next>__add_<table>_<column>.sql` with the same limit
+   (`db-flyway-migrations`, `db-design-postgres-tables`); a nullable column without a volatile
+   default needs no table rewrite.
+4. **Read path** (field only shown): `…Row` record + the column in the read repository's SQL
+   (`be-jdbc-client-reads`) → `…ApiMapper` maps it (an unmapped property fails the compile).
+5. **Write path** (field also stored): the command record and the domain record get the field, the
+   service passes it into the aggregate, `…Entity` gets the column, `…PersistenceMapper` maps both
+   ways (`be-spring-data-jdbc-aggregates`, `be-mapstruct-dto-layers`); the delegate stays a pure map +
+   one service call.
+6. **Tests**: mapper round trip (`*Test`), a web test of each touched operation incl. the `422` for
+   an overlong value, an `*IT` that stores and reads the value (`be-testing-conventions`).
+7. **Guards**: `backend/scripts/api-guards.sh` — a new optional field needs no `api-breaking` label.
+
 ## Dependency direction (ArchUnit)
 
 ```
@@ -176,7 +200,8 @@ api ──► service ──► domain ◄── persistence
 
 - `..domain..` depends on nothing of Spring Data, Jackson, generated API types or persistence.
 - `..api.generated..` types are used only in `..api..`; `…Entity` never reaches `..api..`.
-- Spring Data repositories are called only from the write path of services (ADR-00008).
+- Spring Data repositories are called only from the write path of services (ADR-00008: writes
+  through Spring Data JDBC aggregates, reads through `JdbcClient`).
 - `@Transactional` only in `..service..`; `@Mapper` only with the shared config; no field
   injection; no `System.out`. Rule code: `be-archunit-rules`.
 

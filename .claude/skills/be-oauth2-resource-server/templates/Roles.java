@@ -14,8 +14,9 @@ public final class Roles {
     /** Paired, not suspended, at least one role. Required on /api/**. Reserved name. */
     public static final String ACTIVE = "ACTIVE";
 
-    // Business role codes as stored in the application database.
-    // PLACEHOLDERS until the role analysis fixes the codes.
+    // Business role codes as stored in the application database, normalised (DB "Admin" -> ADMIN).
+    // EXAMPLES ONLY: a new application deletes these and writes the roles its role analysis fixed
+    // (without an analysis: one role, e.g. USER, so a person can become ACTIVE).
     public static final String EMPLOYEE = "EMPLOYEE";
     public static final String MANAGER = "MANAGER";
     public static final String DIRECTOR = "DIRECTOR";
@@ -32,7 +33,7 @@ public final class Roles {
     private Roles() {
     }
 
-    /** Keycloak or database role name -> authority name: "opereta-user" -> "OPERETA_USER". */
+    /** Keycloak or database role name -> authority name (example: "app-user" -> "APP_USER"). */
     public static String normalize(String role) {
         return role.strip().toUpperCase(Locale.ROOT).replaceAll("[^A-Z0-9]", "_");
     }

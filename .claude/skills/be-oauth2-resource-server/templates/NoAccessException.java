@@ -6,7 +6,10 @@ import java.util.Map;
 import org.springframework.http.HttpStatus;
 
 /**
- * The authenticated person has no access to the application (ADR-00004, ADR-00007 point 9).
+ * The authenticated person has no access to the application: account unpaired, no role, or
+ * suspended (ADR-00007 point 9).
+ * Requires lib-web with app.lib.web.error.ProblemException(HttpStatus status, String code, String detail)
+ * and its properties() hook (template in be-problem-details-rfc9457).
  * The global handler of lib-web (be-problem-details-rfc9457) turns every ProblemException into
  * 403 application/problem+json, type /problems/no-access, with "reason" = UNPAIRED | NO_ROLE | SUSPENDED.
  */

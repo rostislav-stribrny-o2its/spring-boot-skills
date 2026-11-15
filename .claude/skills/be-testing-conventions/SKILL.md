@@ -69,10 +69,12 @@ Each application has one abstract base class; every `*IT` of that application ex
 // backend-service, src/test/java/app/backend/AbstractIT.java
 @SpringBootTest(properties = {
     "spring.flyway.enabled=true",                                      // migrate at context start, as on LOCAL
-    "OPERETA_OIDC_ISSUER_URI=http://issuer.test/realms/app",           // project OIDC env prefix (from .env.example);
-    "OPERETA_OIDC_JWKS_URI=http://issuer.test/realms/app/protocol/openid-connect/certs",  // fakes never reach them
-    "OPERETA_OIDC_AUDIENCE=app-api",
-    "OPERETA_OIDC_CLIENT_ID=app-spa",
+    // OIDC variables: use the names from the project's .env.example; the prefix below is only an
+    // EXAMPLE of a project prefix. Dummy values - fake tokens never reach them.
+    "APP_OIDC_ISSUER_URI=http://issuer.test/realms/app",
+    "APP_OIDC_JWK_SET_URI=http://issuer.test/realms/app/protocol/openid-connect/certs",
+    "APP_OIDC_AUDIENCE=app-api",
+    "APP_OIDC_CLIENT_ID=app-frontend",
     "app.jobs.order-cleanup.cron=-"                                    // every job off (be-scheduling-shedlock)
 })
 @AutoConfigureMockMvc
@@ -203,8 +205,8 @@ permissive test configuration to get green tests.
 - Test persons use personal numbers from the reserved test range, never real ones. The range is
   open (decided by the architecture owner; to be written in `docs/design/database/` together with
   the Keycloak test accounts); until then use numbers starting with `9000` and say so in the PR.
-- Add the application's rows of the security matrix from `be-spring-testing-security` (unpaired account,
-  suspension, role administration).
+- Add the application's rows of the security matrix from `be-spring-testing-security` (*examples:*
+  unpaired account, suspended person, role administration).
 
 ## Dependencies (test scope)
 

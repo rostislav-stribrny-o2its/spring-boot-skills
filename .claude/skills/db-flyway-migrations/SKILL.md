@@ -41,6 +41,18 @@ silently never run (both are in the application template of `be-maven-reactor`):
   Migrations grant the runtime role its rights (below).
 - Order: `integration` migrations, then backend migrations, then both applications (ADR-00008 point 12).
   On LOCAL and DEV the start order of the applications keeps it.
+  - The `integration` migrations create only the service's own tables (runs, change records,
+    mirror, staging, view state, ShedLock).
+  - The **backend** migrations create the control tables in the backend schema (example:
+    `integration_control`) and `GRANT USAGE ON SCHEMA` + `GRANT SELECT` on them to the scheduler's
+    runtime role (placeholder `${scheduler_role}`); that role must already exist (admin script).
+  - So on the very first start nothing references a table that does not exist yet: the scheduler
+    reads `backend.<control table>` only at its ticks, and treats a missing table as "no view to
+    read" (`be-scheduler-service`).
+- How the reference implementation runs this on LOCAL and in CI: one script/container that migrates
+  `integration`, then `backend`, then (LOCAL only) the test data — `backend/scripts/db.sh migrate
+  local|deploy` and the `db-migrate` image (`dockerfiles/Dockerfile.db-migrate`), started before both
+  applications. Read those files in the repository before changing the order.
 
 **`search_path` — one rule for every login:** each application's logins see **its own schema**
 first, so its own tables are written **unqualified** everywhere (SQL, `@Table`, migrations); a table
@@ -81,9 +93,10 @@ spring:
     schemas: backend                            # schema name per docs/design/database
     default-schema: backend                     # search_path of the owner login while migrating
     create-schemas: false                       # the admin script prepares database and roles
-    locations: ${DB_MIGRATION_LOCATIONS:classpath:db/migration}
+    locations: classpath:db/migration           # LOCAL profile adds classpath:db/testdata (below)
     placeholders:
       runtime_role: ${DB_APP_USER}
+      scheduler_role: ${DB_SCHEDULER_USER}      # backend only: grants on the control tables
     baseline-on-migrate: false                  # reject non-empty schemas without history
     validate-on-migrate: true
     validate-migration-naming: true
@@ -93,39 +106,47 @@ spring:
       transactional-lock: false                 # required for CREATE INDEX CONCURRENTLY
 ```
 
+Variable names above are illustrative; take the real ones from `backend/.env.example` and each
+application's `application.yaml` (example: runtime logins `DB_API_USER` for
+`backend-service` and `DB_SCHEDULER_USER` for `scheduler-service`, owner `DB_OWNER_USER`).
 `scheduler-service` uses the same block with `integration` in place of `backend`. Wherever
 `DB_MIGRATE_ON_START=true`, `DB_OWNER_USER`/`DB_OWNER_PASSWORD` must be set too.
 
-**Separate step on TEST and PROD.** A one-shot migration container (official Flyway image, pinned by
-digest, running as non-root) carrying the `db/migration` folders of both applications. It is the only
-holder of the owner password and applies the same settings as above (default schema, locations,
-placeholders, validation). The deployment command runs: backup (PROD), stop, migrate, start, health
-check (ADR-00008 point 12); where that command lives: open (decided by the architecture owner in
-`docs/admin-guide/operations/`). Keep the Flyway CLI version equal to the Flyway version managed by
-Spring Boot, so both write the same history table format.
-
-**Dropping the schema only on LOCAL** (ADR-00008 point 11): reset by recreating the local database
-volume, or Flyway `clean` from the command line against the local database. Never via application
-configuration, never on DEV, TEST or PROD; how DEV and TEST are reset is open (decided by the
-architecture owner, ADR-00008).
+**Separate step on TEST and PROD**: a one-shot, non-root migration container (official Flyway image
+pinned by digest, Flyway CLI version = the Boot-managed one) with the `db/migration` folders of both
+applications, the only holder of the owner password; deployment = backup (PROD), stop, migrate,
+start, health check. **Dropping the schema only on LOCAL**, by recreating the database volume or
+`flyway clean` from the command line. Details: [migration-patterns.md](migration-patterns.md),
+"Environments".
 
 ## Grants in migrations
 
 Migrations run as the owner, so default privileges cover every later table of the owner:
 
 ```sql
--- V00001__grant_runtime_role.sql   (${flyway:defaultSchema} = the own schema)
-GRANT USAGE ON SCHEMA ${flyway:defaultSchema} TO ${runtime_role};
+-- V00001__grant_runtime_role.sql   (${flyway:defaultSchema} = the own schema; same file in both applications)
+GRANT USAGE ON SCHEMA ${flyway:defaultSchema} TO "${runtime_role}";
 ALTER DEFAULT PRIVILEGES IN SCHEMA ${flyway:defaultSchema}
-    GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO ${runtime_role};
+    GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO "${runtime_role}";
 ALTER DEFAULT PRIVILEGES IN SCHEMA ${flyway:defaultSchema}
-    GRANT USAGE, SELECT ON SEQUENCES TO ${runtime_role};
+    GRANT USAGE, SELECT ON SEQUENCES TO "${runtime_role}";
 ```
 
-Role and schema names come from placeholders (they differ per environment), never literals.
-Narrower rights (append-only, read-only for support views) are granted explicitly in the migration
-that creates the table. Backend migrations also grant the integration service read access to the
-control tables they create (ADR-00008 point 12).
+Role and schema names come from placeholders (they differ per environment), never literals; role
+names are quoted. The default covers what both runtime roles need (the ShedLock table needs
+`SELECT, INSERT, UPDATE`; staging, mirror and run state in `integration` need all four). Narrower
+rights are taken away or granted explicitly in the migration that creates the table:
+
+```sql
+-- integration: change records are append-only for the runtime role (ADR-00008 point 12)
+REVOKE UPDATE, DELETE ON integration_change_records FROM "${runtime_role}";
+-- + a BEFORE UPDATE OR DELETE trigger that raises an exception (immutability guard, allowed)
+-- deletion after the retention period: a separate cleanup role, GRANT DELETE explicitly
+
+-- backend: the scheduler may read the control tables it is driven by
+GRANT USAGE ON SCHEMA ${flyway:defaultSchema} TO "${scheduler_role}";
+GRANT SELECT ON TABLE integration_control TO "${scheduler_role}";
+```
 
 ## Location and File Naming
 
@@ -157,53 +178,17 @@ R__order_summary_view.sql
 
 ## Example Migrations
 
-```sql
--- V00002__create_order_status.sql — lookup table instead of a PostgreSQL ENUM
-CREATE TABLE order_status (
-    id          smallint PRIMARY KEY,           -- stable, assigned in the migration
-    code        text NOT NULL UNIQUE CHECK (length(code) <= 30),
-    name        text NOT NULL
-);
-
-INSERT INTO order_status (id, code, name) VALUES
-    (1, 'PENDING',   'Pending'),
-    (2, 'CONFIRMED', 'Confirmed'),
-    (3, 'CANCELLED', 'Cancelled');
-
--- V00003__create_customer.sql
-CREATE TABLE customer (
-    id          bigint GENERATED ALWAYS AS IDENTITY (MAXVALUE 9007199254740991) PRIMARY KEY,
-    name        text NOT NULL,
-    version     bigint NOT NULL DEFAULT 0
-);
-
--- V00004__create_customer_order.sql
-CREATE TABLE customer_order (
-    id              bigint GENERATED ALWAYS AS IDENTITY (MAXVALUE 9007199254740991) PRIMARY KEY,
-    customer_id     bigint NOT NULL REFERENCES customer (id),
-    order_status_id smallint NOT NULL REFERENCES order_status (id),
-    total_amount    numeric(19, 2) NOT NULL DEFAULT 0,
-    created_at      timestamptz NOT NULL DEFAULT now(),
-    updated_at      timestamptz NOT NULL DEFAULT now(),
-    version         bigint NOT NULL DEFAULT 0   -- optimistic locking (@Version)
-);
-
-CREATE INDEX customer_order_customer_id_idx ON customer_order (customer_id);
-CREATE INDEX customer_order_order_status_id_idx ON customer_order (order_status_id);
-```
-
-Table names are unqualified: Flyway's `default-schema` puts them into the own schema. IDs are
-`bigint` bounded by 2^53−1 so they stay exact as JSON numbers; exact decimals are `numeric(p, s)`.
-Details in `db-design-postgres-tables`. (The audit columns `created_by`/`updated_by` of ADR-00008
-point 15 are left out of the examples for brevity.)
+The example set (`order_status`, `customer`, `customer_order`, `customer_note`, with the standard
+columns, `ON DELETE` actions and index names) is the one in `db-design-postgres-tables`, "Example";
+its file names are those listed above. Table names are unqualified: Flyway's `default-schema` puts
+them into the own schema. A new migration takes the next free number after the highest existing
+`V` file of that application (gaps are never filled).
 
 ## Data migrations over existing rows
 
-When a versioned migration modifies or backfills existing data (rather than pure DDL or static reference rows), verify four safeguards before merge (`db-postgres-database-migration`):
-1. **Batching and lock duration:** bound table lock duration on non-trivial tables (batched updates or `statement_timeout` / `lock_timeout` guards so production traffic is not stalled).
-2. **Pre/post control counts:** assert expected row counts or control aggregates before and after the data transformation (fail the migration transaction immediately if invariants diverge).
-3. **Forward-recovery path:** because modified data does not roll back once committed across releases, document and test the forward-recovery procedure.
-4. **Synthetic or anonymized data only:** validate the migration against synthetic or anonymized data in Testcontainers — never copy raw production personal/sensitive data into test fixtures or AI context.
+A migration that modifies or backfills existing rows needs four safeguards before merge (bounded
+locks/batches, pre/post control counts, a forward-recovery path, synthetic data only):
+[migration-patterns.md](migration-patterns.md), "Data migrations over existing rows".
 
 ## Reference data vs. fictitious data
 
@@ -216,21 +201,46 @@ When a versioned migration modifies or backfills existing data (rather than pure
 ```
 <app-module>/src/main/resources/db/testdata/
 R__testdata_10_persons.sql
-R__testdata_20_projects.sql
+R__testdata_20_customers.sql
+R__testdata_30_customer_notes.sql
+R__testdata_90_demo.sql
 ```
 
-- Separate repeatable scripts, enabled only by
-  `DB_MIGRATION_LOCATIONS=classpath:db/migration,classpath:db/testdata` on LOCAL and DEV branch stacks.
-  Flyway runs repeatables **after** all versioned migrations and re-runs a script when its content
-  changes.
+- **Numbering** in steps of ten by dependency: a script only references data of lower numbers
+  (persons first, `90` for loose demo data). A new script takes the next free ten after the scripts
+  it depends on. Flyway runs repeatables **after** all versioned migrations, in name order, and
+  re-runs a script when its content changes.
+- **Enabled only on LOCAL and DEV branch stacks**, by adding the location `db/testdata`:
+  - at application start: the LOCAL profile, `application-local.yaml` →
+    `spring.flyway.locations: classpath:db/migration,classpath:db/testdata`;
+  - in the separate migration step: `DB_MIGRATE_TESTDATA=true` (the `db-migrate` image and
+    `scripts/db.sh migrate local` add the folder; default `false`).
+  Check the repository (`application-local.yaml`, `docker-compose.yml`, `backend/.env.example`) for
+  which of the two it uses; never add a third switch.
 - **Idempotent**: upsert by natural key (`INSERT … ON CONFLICT (personal_number) DO UPDATE …`), look
   up foreign keys by natural key in a subselect, never hard-code identity values, never delete rows a
   user created. Running a script twice yields the same state.
+- **A table without a natural key** (example: `customer_note`): insert only when the same row does
+  not exist yet, identified by the parent's natural key plus the row's own content; no unique
+  constraint is added just for test data:
+
+  ```sql
+  INSERT INTO customer_note (customer_id, note)
+  SELECT c.id, v.note
+  FROM (VALUES ('jan.novak@example.com', 'Prefers e-mail contact')) AS v(email, note)
+  JOIN customer c ON LOWER(c.email) = v.email
+  WHERE NOT EXISTS (SELECT 1 FROM customer_note n WHERE n.customer_id = c.id AND n.note = v.note);
+  ```
 - A `V` migration that changes a table used by a test-data script updates the script in the same change
   (the script is re-run and must still apply).
-- **In step with the Keycloak test accounts** (ADR-00004 point 8): every fictitious person carries the
-  personal number of a fictitious test account, from the reserved test range; never a real one. The
-  range itself: open (decided by the architecture owner; to be written in `docs/design/database/`).
+- **In step with the Keycloak test accounts** (fictitious test accounts exist on LOCAL, DEV and TEST,
+  never on PROD; a person is identified by personal number, never by e-mail or login): every
+  fictitious person carries the personal number of a fictitious test account; never a real one.
+  Use the range the repository's `R__testdata_10_persons.sql` and the Keycloak test users
+  (`keycloak/config/development/users.yaml`) already use (*example:* `10000001`–`10000009`, i.e.
+  `1000xxxx`), continuing after its highest number. Child rows (notes, orders) hang on those existing
+  fictitious persons or on fictitious records of a lower-numbered script. If the repository has no
+  fictitious persons yet, ask before inventing a range.
 - **CI check**: the configuration templates delivered for TEST and PROD neither enable migrations at
   start nor list `db/testdata`, and the migration-step image keeps `DB_MIGRATE_TESTDATA=false` by
   default (never enabled on TEST or PROD).

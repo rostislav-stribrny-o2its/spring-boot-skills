@@ -77,7 +77,7 @@ public class LibSecurityConfiguration {
     }
 
     /**
-     * azp = the client the token was issued to (ADR-00004 point 2). Spring Boot adds
+     * azp = the client the token was issued to; must equal the frontend client. Spring Boot adds
      * OAuth2TokenValidator beans to the auto-configured JwtDecoder next to the issuer,
      * timestamp (60 s skew) and audience validators.
      */

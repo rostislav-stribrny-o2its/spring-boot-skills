@@ -17,9 +17,9 @@ ALTER TABLE customer_order ADD COLUMN customer_email text;
 UPDATE customer_order SET customer_email = legacy_email WHERE customer_email IS NULL;
 -- V00007 (after every writer fills customer_email): enforce for new rows without a scan
 ALTER TABLE customer_order
-    ADD CONSTRAINT customer_order_customer_email_nn CHECK (customer_email IS NOT NULL) NOT VALID;
+    ADD CONSTRAINT ck_customer_order_customer_email_nn CHECK (customer_email IS NOT NULL) NOT VALID;
 -- V00008 (separate migration): validate without blocking writes, then SET NOT NULL skips the scan
-ALTER TABLE customer_order VALIDATE CONSTRAINT customer_order_customer_email_nn;
+ALTER TABLE customer_order VALIDATE CONSTRAINT ck_customer_order_customer_email_nn;
 ALTER TABLE customer_order ALTER COLUMN customer_email SET NOT NULL;
 -- V00009 (after no deployed code reads legacy_email)
 ALTER TABLE customer_order DROP COLUMN legacy_email;
@@ -28,14 +28,46 @@ ALTER TABLE customer_order DROP COLUMN legacy_email;
 -- transactional and non-transactional statements), and transactional-lock=false (otherwise the
 -- build waits forever on Flyway's own advisory-lock transaction).
 -- V00006__index_customer_order_email.sql
-CREATE INDEX CONCURRENTLY customer_order_customer_email_idx ON customer_order (customer_email);
+CREATE INDEX CONCURRENTLY idx_customer_order_customer_email ON customer_order (customer_email);
 
 -- Dangerous: RENAME a column running code uses; NOT NULL without default on a table with rows
 ```
 
 A new table that no deployed code uses yet may get its indexes in the same migration without
-`CONCURRENTLY`. Forward-only means an older release cannot run on a newer schema (ADR-00003): split
+`CONCURRENTLY`. Forward-only means an older release cannot run on a newer schema (rolling back production
+is a database restore to a point in time, never a downgrade migration): split
 incompatible changes into expand, migrate, contract.
+
+## Environments
+
+**Separate step on TEST and PROD.** A one-shot migration container (official Flyway image, pinned by
+digest, running as non-root) carrying the `db/migration` folders of both applications. It is the only
+holder of the owner password and applies the same settings as the application configuration
+(default schema, locations, placeholders, validation), `integration` first, then `backend`. The
+deployment command runs: backup (PROD), stop, migrate, start, health check (ADR-00008 point 12);
+where that command lives: open (decided by the architecture owner in `docs/admin-guide/operations/`).
+Keep the Flyway CLI version equal to the Flyway version managed by Spring Boot, so both write the
+same history table format. Reference: `dockerfiles/Dockerfile.db-migrate`, `backend/scripts/db.sh`.
+
+**Dropping the schema only on LOCAL** (ADR-00008 point 11): reset by recreating the local database
+volume, or Flyway `clean` from the command line against the local database. Never via application
+configuration, never on DEV, TEST or PROD; how DEV and TEST are reset is open (decided by the
+architecture owner, ADR-00008).
+
+## Data migrations over existing rows
+
+When a versioned migration modifies or backfills existing data (rather than pure DDL or static
+reference rows), verify four safeguards before merge (`db-postgres-database-migration`):
+
+1. **Batching and lock duration:** bound table lock duration on non-trivial tables (batched updates
+   or `statement_timeout` / `lock_timeout` guards so production traffic is not stalled).
+2. **Pre/post control counts:** assert expected row counts or control aggregates before and after
+   the data transformation (fail the migration transaction immediately if invariants diverge).
+3. **Forward-recovery path:** because modified data does not roll back once committed across
+   releases, document and test the forward-recovery procedure.
+4. **Synthetic or anonymized data only:** validate the migration against synthetic or anonymized
+   data in Testcontainers — never copy raw production personal/sensitive data into test fixtures or
+   AI context.
 
 ## Existing database without history
 

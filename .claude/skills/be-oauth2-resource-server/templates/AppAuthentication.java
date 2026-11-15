@@ -12,8 +12,9 @@ import java.util.Collection;
 import java.util.Optional;
 
 /**
- * Authentication of one request. getName() is the principal (Opereta: personal number,
- * ADR-00004 point 5). Services read it through current(); nobody else reads claims.
+ * Authentication of one request. getName() is the principal: the stable business id of the person
+ * (example: personal number), never e-mail or username. Services read it through current();
+ * nobody else reads claims.
  */
 public final class AppAuthentication extends JwtAuthenticationToken {
 
@@ -35,7 +36,7 @@ public final class AppAuthentication extends JwtAuthenticationToken {
             ? Optional.of(app) : Optional.empty();
     }
 
-    /** Personal number (value of the configured principal claim). */
+    /** Value of the configured principal claim (example: personal number). */
     public String principal() {
         return getName();
     }

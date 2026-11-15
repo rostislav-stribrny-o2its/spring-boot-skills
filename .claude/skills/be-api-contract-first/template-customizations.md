@@ -40,6 +40,17 @@ feature change.
   class sanitized. The original `@JsonTypeName` lines stay. These are the only Lombok annotations
   in generated code (`be-lombok`); never `@Data`. Not yet verified by a build in this repository.
 
+## Switching
+
+- **From `interfaceOnly`:** an earlier configuration with `interfaceOnly: true`,
+  `skipDefaultInterface: true` and no `modelNameSuffix` is replaced by the settings table of
+  `be-api-contract-first` §4 in one controlled change (its own PR, together with the template
+  customizations); feature code written against the earlier interfaces moves into delegates in that PR.
+- **From an earlier export:** when the `api-spec` export replaces an earlier one (e.g. a
+  `be-service-public.json` written by an `exec-maven-plugin` run without a server), delete the old
+  file and the old export execution in the same PR; the freshness check does not notice a stale
+  file nobody writes any more.
+
 ## Upgrade
 
 Unpack the new originals, diff old vs new originals, re-apply each BEGIN/END block, rebuild,

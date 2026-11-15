@@ -1,8 +1,8 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!-- Template: backend/api-spec/pom.xml - the small app that exports the spec at build (ADR-00006, point 2).
-     pre-integration-test: start the app; integration-test: fetch each spec group and write it to specs/;
-     post-integration-test: stop. One springdoc execution per spec file.
-     Not yet verified by a build in this repository. -->
+     validate: reserve two free ephemeral ports; pre-integration-test: start the app;
+     integration-test: fetch each spec group and write it to specs/; post-integration-test: stop.
+     One springdoc execution per spec file. As in the stack's reference implementation. -->
 <project xmlns="http://maven.apache.org/POM/4.0.0"
          xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
          xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
@@ -17,10 +17,12 @@
     <artifactId>api-spec</artifactId>
 
     <properties>
-        <!-- Fixed port of the export app; must be free on the build machine. -->
-        <api-spec.port>8070</api-spec.port>
-        <api-spec.docs>http://localhost:${api-spec.port}/v3/api-docs</api-spec.docs>
+        <!-- Do NOT define api-spec.port or api-spec.jmxPort here: Maven interpolates static POM
+             properties when it builds the model, before reserve-network-port runs, which would
+             freeze the values. -->
         <api-spec.out>${repo.root}/specs/${spec.app}/openapi</api-spec.out>
+        <!-- No business logic here: excluded from the unit-coverage gate. -->
+        <jacoco.unit.skip>true</jacoco.unit.skip>
     </properties>
 
     <dependencies>
@@ -33,13 +35,32 @@
 
     <build>
         <plugins>
+            <!-- Dynamic free ports for HTTP and JMX (version from the Spring Boot parent), so parallel
+                 builds on one host and sockets in TIME_WAIT never collide. -->
+            <plugin>
+                <groupId>org.codehaus.mojo</groupId>
+                <artifactId>build-helper-maven-plugin</artifactId>
+                <executions>
+                    <execution>
+                        <id>reserve-api-spec-ports</id>
+                        <phase>validate</phase>
+                        <goals><goal>reserve-network-port</goal></goals>
+                        <configuration>
+                            <portNames>
+                                <portName>api-spec.port</portName>
+                                <portName>api-spec.jmxPort</portName>
+                            </portNames>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
             <plugin>
                 <groupId>org.springframework.boot</groupId>
                 <artifactId>spring-boot-maven-plugin</artifactId>
                 <configuration>
                     <mainClass>app.apispec.ApiSpecApplication</mainClass>
                     <arguments><argument>--server.port=${api-spec.port}</argument></arguments>
-                    <jmxPort>9070</jmxPort> <!-- unique per started app in the reactor -->
+                    <jmxPort>${api-spec.jmxPort}</jmxPort>
                 </configuration>
                 <executions>
                     <!-- Not a deliverable: never repackage. -->
@@ -59,7 +80,7 @@
                         <phase>integration-test</phase>
                         <goals><goal>generate</goal></goals>
                         <configuration>
-                            <apiDocsUrl>${api-spec.docs}/public-main-backend</apiDocsUrl>
+                            <apiDocsUrl>http://localhost:${api-spec.port}/v3/api-docs/public-main-backend</apiDocsUrl>
                             <outputDir>${api-spec.out}/public/main</outputDir>
                             <outputFileName>backend-service-public.json</outputFileName>
                         </configuration>
