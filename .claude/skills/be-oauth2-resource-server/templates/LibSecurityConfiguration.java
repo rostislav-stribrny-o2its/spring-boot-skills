@@ -28,6 +28,9 @@ import org.springframework.web.servlet.HandlerExceptionResolver;
  * {@code @Import(LibSecurityConfiguration.class)}; it brings lib-web (global problem handler,
  * correlation filter) and through it lib-core. Not yet verified by a build in this repository.
  *
+ * Configured for pattern (a) default (application-roles via ApplicationAccess, ADR-00004 point 3);
+ * in pattern (b) token-roles, ApplicationAccess is omitted when chosen by the app's identity ADR.
+ *
  * Token validation (issuer, JWKS, RS256, audience) is Spring Boot's auto-configured JwtDecoder,
  * driven by spring.security.oauth2.resourceserver.jwt.* (see application-security.yaml);
  * this class adds the azp check, the converter and the authorization rules.
@@ -41,8 +44,8 @@ import org.springframework.web.servlet.HandlerExceptionResolver;
 public class LibSecurityConfiguration {
 
     /**
-     * The status endpoint path comes from app.security.me-path (default /api/users/me) and must
-     * equal the path in the API contract; otherwise the /api/** rule catches it and every new
+     * The status endpoint path comes from app.security.me-path (example: /api/users/me) and must
+     * equal the path in the API contract (ADR-00006); otherwise the /api/** rule catches it and every new
      * user gets 403. The IT "paired user with ENTRY only -> 200 on the status endpoint" guards it.
      */
     @Bean

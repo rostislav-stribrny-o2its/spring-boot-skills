@@ -4,10 +4,11 @@ import java.io.Serializable;
 import java.util.Set;
 
 /**
- * Port to the application's own access data (an interface because it crosses the module
- * boundary, ADR-00002 point 7). backend-service implements it with one indexed read through
- * JdbcClient (be-jdbc-client-reads): person by principal, suspension, role codes. Tables, SQL and
- * the implementing service: reference.md of this skill.
+ * Port to the application's own access data in pattern (a) default — application-roles model
+ * (ADR-00004 point 3; an interface because it crosses the module boundary, ADR-00002 point 7).
+ * Omitted in pattern (b) token-roles variant when chosen by the app's identity ADR.
+ * backend-service implements it with one indexed read through JdbcClient (be-jdbc-client-reads):
+ * person by principal, suspension, role codes. Tables, SQL and the implementing service: reference.md.
  * Called on every authenticated request: a ban applies once it is in the database, regardless of
  * token validity, plus an optional cache of at most 5 minutes.
  */

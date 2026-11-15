@@ -1,6 +1,9 @@
 # Fragment of the security configuration (lib-security). Environment-specific values come from the
 # environment; this shared fragment carries no defaults (an application's application.yaml may add
-# LOCAL-only defaults). principal-claim and me-path are fixed per project.
+# LOCAL-only defaults).
+# Application-roles is pattern (a) default (ADR-00004 point 3); pattern (b) token-roles omits ApplicationAccess
+# when chosen by the application's identity ADR. principal-claim (example: personal_number) and
+# me-path (example: /api/users/me) are configuration/contract-driven.
 #
 # APP_ is the EXAMPLE prefix: use the project's prefix from backend/.env.example. Client ids,
 # entry role and principal claim: read them in keycloak/config/**/realm.yaml.
@@ -33,6 +36,6 @@ app:
     principal-claim: personal_number                 # project constant (claim NAME); example value
     entry-role: ${APP_OIDC_ENTRY_ROLE:app-user}      # default = the project's own entry role name (example)
     role-client-id: ${APP_OIDC_AUDIENCE}             # always the API audience: client roles count only for the API client
-    me-path: /api/users/me                     # status endpoint; equal to the path in the API contract
+    me-path: /api/users/me                     # status endpoint; equal to the path in the API contract (ADR-00006; example)
 # Tests: no environment variable exists there; the shared IT base class sets these keys once
 # (be-testing-conventions), so the context starts and every IT shares one context.

@@ -40,11 +40,11 @@ silently never run (both are in the application template of `be-maven-reactor`):
 - **The database and the roles are created by the one-time DB admin script**, never by a migration.
   Migrations grant the runtime role its rights (below).
 - Order: `integration` migrations, then backend migrations, then both applications (ADR-00008 point 12).
-  On LOCAL and DEV the start order of the applications keeps it.
+  The separate migration step (`db-migrate` / `backend/scripts/db.sh`) keeps this order across all environments.
   - The `integration` migrations create only the service's own tables (runs, change records,
     mirror, staging, view state, ShedLock).
   - The **backend** migrations create the control tables in the backend schema (example:
-    `integration_control`) and `GRANT USAGE ON SCHEMA` + `GRANT SELECT` on them to the scheduler's
+    `integration_controls`) and `GRANT USAGE ON SCHEMA` + `GRANT SELECT` on them to the scheduler's
     runtime role (placeholder `${scheduler_role}`); that role must already exist (admin script).
   - So on the very first start nothing references a table that does not exist yet: the scheduler
     reads `backend.<control table>` only at its ticks, and treats a missing table as "no view to
@@ -57,7 +57,7 @@ silently never run (both are in the application template of `be-maven-reactor`):
 **`search_path` — one rule for every login:** each application's logins see **its own schema**
 first, so its own tables are written **unqualified** everywhere (SQL, `@Table`, migrations); a table
 of the **other** application's schema is always **qualified** (`integration.run`,
-`backend.integration_control`).
+`backend.integration_controls`).
 
 - runtime login: `spring.datasource.hikari.schema: <own schema>` (Hikari sets it on every
   connection; PostgreSQL's default `"$user", public` would find nothing);
@@ -69,14 +69,15 @@ of the **other** application's schema is always **qualified** (`integration.run`
 
 | Environment | When migrations run | Login | Drop schema |
 |---|---|---|---|
-| LOCAL | at application start (Spring Boot Flyway) | owner (`spring.flyway.user`) | allowed — locally only |
-| DEV (reference stack and branch stacks) | at application start | owner | never |
-| TEST | separate step **before** start | owner, known **only** to that step | never |
+| LOCAL | separate step before start (`backend/scripts/db.sh migrate local` or `db-migrate`) | owner (`DB_OWNER_USER`) in migrate step | allowed — locally only (via CLI/volume reset) |
+| DEV (reference stack and branch stacks) | separate step before start (`db-migrate` container) | owner in migrate step | never |
+| TEST | separate step before start (`db-migrate` container) | owner, known **only** to that step | never |
 | PROD | separate step before start, **after a backup** | owner, only that step | never |
 
-The application always runs with the runtime login (`spring.datasource.*`). On LOCAL and DEV the owner
-password is additionally in the application's environment, used only by Flyway; on TEST and PROD it is
-not there at all (ADR-00008 point 12).
+In **every** environment (`LOCAL`, `DEV`, `TEST`, `PROD`), migrations run in a separate pre-start
+step (`db-migrate` container / `backend/scripts/db.sh migrate local|deploy`). The applications always run
+with the runtime login (`spring.datasource.*`), `spring.flyway.enabled` stays `false` in application
+runtime configuration, and applications never receive `DB_OWNER_USER` or `DB_OWNER_PASSWORD` (ADR-00008 point 12).
 
 ```yaml
 spring:
@@ -87,37 +88,20 @@ spring:
     hikari:
       schema: backend                           # search_path of the runtime login = own schema
   flyway:
-    enabled: ${DB_MIGRATE_ON_START:false}       # true only on LOCAL and DEV; default off = safe
-    user: ${DB_OWNER_USER:}                     # owner login; empty = Flyway would use the datasource
-    password: ${DB_OWNER_PASSWORD:}             #   login, which is harmless only because enabled=false there
-    schemas: backend                            # schema name per docs/design/database
-    default-schema: backend                     # search_path of the owner login while migrating
-    create-schemas: false                       # the admin script prepares database and roles
-    locations: classpath:db/migration           # LOCAL profile adds classpath:db/testdata (below)
-    placeholders:
-      runtime_role: ${DB_APP_USER}
-      scheduler_role: ${DB_SCHEDULER_USER}      # backend only: grants on the control tables
-    baseline-on-migrate: false                  # reject non-empty schemas without history
-    validate-on-migrate: true
-    validate-migration-naming: true
-    out-of-order: false
-    clean-disabled: true                        # the application never drops the schema
-    postgresql:
-      transactional-lock: false                 # required for CREATE INDEX CONCURRENTLY
+    enabled: false                              # migrations run only via separate db-migrate step
 ```
 
 Variable names above are illustrative; take the real ones from `backend/.env.example` and each
 application's `application.yaml` (example: runtime logins `DB_API_USER` for
-`backend-service` and `DB_SCHEDULER_USER` for `scheduler-service`, owner `DB_OWNER_USER`).
-`scheduler-service` uses the same block with `integration` in place of `backend`. Wherever
-`DB_MIGRATE_ON_START=true`, `DB_OWNER_USER`/`DB_OWNER_PASSWORD` must be set too.
+`backend-service` and `DB_SCHEDULER_USER` for `scheduler-service`, owner `DB_OWNER_USER` used only in the migration step).
+`scheduler-service` uses `integration` as its schema in place of `backend`.
 
-**Separate step on TEST and PROD**: a one-shot, non-root migration container (official Flyway image
-pinned by digest, Flyway CLI version = the Boot-managed one) with the `db/migration` folders of both
-applications, the only holder of the owner password; deployment = backup (PROD), stop, migrate,
-start, health check. **Dropping the schema only on LOCAL**, by recreating the database volume or
-`flyway clean` from the command line. Details: [migration-patterns.md](migration-patterns.md),
-"Environments".
+**Separate step in every environment**: a one-shot, non-root migration container (`dockerfiles/Dockerfile.db-migrate`,
+official Flyway image pinned by digest, Flyway CLI version = the Boot-managed one) or CLI script
+(`backend/scripts/db.sh migrate local|deploy`) with the `db/migration` folders of both applications, the only holder of
+the owner password; deployment = backup (PROD), stop, migrate, start, health check. **Dropping the schema is allowed only on LOCAL**,
+by recreating the database volume or Flyway `clean` from the command line (never via application config).
+Details: [migration-patterns.md](migration-patterns.md), "Environments".
 
 ## Grants in migrations
 
@@ -145,7 +129,7 @@ REVOKE UPDATE, DELETE ON integration_change_records FROM "${runtime_role}";
 
 -- backend: the scheduler may read the control tables it is driven by
 GRANT USAGE ON SCHEMA ${flyway:defaultSchema} TO "${scheduler_role}";
-GRANT SELECT ON TABLE integration_control TO "${scheduler_role}";
+GRANT SELECT ON TABLE integration_controls TO "${scheduler_role}";
 ```
 
 ## Location and File Naming
@@ -211,12 +195,9 @@ R__testdata_90_demo.sql
   it depends on. Flyway runs repeatables **after** all versioned migrations, in name order, and
   re-runs a script when its content changes.
 - **Enabled only on LOCAL and DEV branch stacks**, by adding the location `db/testdata`:
-  - at application start: the LOCAL profile, `application-local.yaml` →
-    `spring.flyway.locations: classpath:db/migration,classpath:db/testdata`;
-  - in the separate migration step: `DB_MIGRATE_TESTDATA=true` (the `db-migrate` image and
-    `scripts/db.sh migrate local` add the folder; default `false`).
-  Check the repository (`application-local.yaml`, `docker-compose.yml`, `backend/.env.example`) for
-  which of the two it uses; never add a third switch.
+  - in the separate migration step: set `DB_MIGRATE_TESTDATA=true` (the `db-migrate` container and
+    `backend/scripts/db.sh migrate local` add the `db/testdata` folder; default `false`).
+  Applications never run migrations or load test data at startup (`spring.flyway.enabled: false`).
 - **Idempotent**: upsert by natural key (`INSERT … ON CONFLICT (personal_number) DO UPDATE …`), look
   up foreign keys by natural key in a subselect, never hard-code identity values, never delete rows a
   user created. Running a script twice yields the same state.

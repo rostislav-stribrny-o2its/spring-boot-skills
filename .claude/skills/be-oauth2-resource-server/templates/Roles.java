@@ -4,12 +4,14 @@ import java.util.Locale;
 
 /**
  * Authority names (without the ROLE_ prefix) and the @PreAuthorize expressions built from them.
+ * In pattern (a) default (application-roles model, ADR-00004 point 3), business roles come from
+ * the application database; in pattern (b) (token-roles variant), they map directly from token roles.
  * The only place role strings are written. Expressions are compile-time constants so they can be
  * used in annotations: @PreAuthorize(Roles.HAS_APP_ADMIN).
  */
 public final class Roles {
 
-    /** Token carries the configured entry role. Reaches only the status endpoint /api/users/me. Reserved name. */
+    /** Token carries the configured entry role. Reaches only the status endpoint (example: /api/users/me). Reserved name. */
     public static final String ENTRY = "ENTRY";
     /** Paired, not suspended, at least one role. Required on /api/**. Reserved name. */
     public static final String ACTIVE = "ACTIVE";

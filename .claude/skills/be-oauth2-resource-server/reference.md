@@ -1,4 +1,4 @@
-# Access data, `/api/users/me` and realm — reference
+# Access data, status endpoint (/api/users/me) and realm — reference
 
 Part of `be-oauth2-resource-server`. Shapes below are those of the reference implementation of the
 stack template; names marked *example* are that application's values. In a new repository read the
@@ -12,7 +12,7 @@ already has them, the repository wins; where it has nothing, create exactly thes
 -- V000NN__create_user_access.sql
 CREATE TABLE persons (                                   -- example name; the person table of the application
     id              BIGINT GENERATED ALWAYS AS IDENTITY (MAXVALUE 9007199254740991) PRIMARY KEY,
-    personal_number VARCHAR(32) NOT NULL UNIQUE,         -- the principal (value of app.security.principal-claim)
+    personal_number VARCHAR(32) NOT NULL UNIQUE,         -- example principal column (value of app.security.principal-claim)
     account_subject VARCHAR(255) UNIQUE,                 -- Keycloak "sub", bound on first sign-in; audit only, never a key
     email           VARCHAR(255),                        -- display data: the token carries none
     full_name       VARCHAR(255),                        -- display name shown by the frontend
@@ -110,7 +110,7 @@ API model record (`app.api.main.user.UserResponse`; generated `UserResponseDto`)
 | Field | Java (model) | Meaning |
 |---|---|---|
 | `id` | `Long` (`@Schema(maximum = "9007199254740991")`) | person id |
-| `personalNumber` | `String` | principal |
+| `personalNumber` | `String` | principal (example field matching `app.security.principal-claim`) |
 | `email` | `String`, nullable | display data from `persons` |
 | `fullName` | `String`, nullable | display name from `persons` (never from the token) |
 | `paired` | `boolean` | always `true` in a `200` |
@@ -186,21 +186,22 @@ clients:
       included.client.audience: app-api
       id.token.claim: 'false'
       access.token.claim: 'true'
-  - name: personal-number
+  - name: personal-number                                # example mapper for app.security.principal-claim
     protocol: openid-connect
     protocolMapper: oidc-usermodel-attribute-mapper
     config:
-      user.attribute: personal_number
-      claim.name: personal_number
+      user.attribute: personal_number                    # example user attribute
+      claim.name: personal_number                        # example claim matching app.security.principal-claim
       jsonType.label: String
       id.token.claim: 'true'
       access.token.claim: 'true'
 ```
 
-- The user profile must declare the attribute `personal_number` (editable by `admin` only).
+- The user profile must declare the principal attribute (example: `personal_number`; editable by
+  `admin` only).
 - Test accounts (`keycloak/config/development/users.yaml`, never in `production/`) carry
-  `attributes.personal_number` equal to the fictitious persons of `db/testdata`
-  (`db-flyway-migrations`) and the entry role.
+  principal attribute (example: `attributes.personal_number`) matching `app.security.principal-claim`
+  equal to the fictitious persons of `db/testdata` (`db-flyway-migrations`) and the entry role.
 - Granting the entry role through a directory (AD) group: an LDAP/AD group mapper in the realm's user
   federation maps the environment's entry group to the entry role; the group name is environment
   configuration (one group per environment). Until the directory is connected, test accounts get the

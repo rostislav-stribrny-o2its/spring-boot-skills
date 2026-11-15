@@ -16,8 +16,12 @@ import java.util.Map;
 import java.util.Set;
 
 /**
- * The ONE place that turns a verified Keycloak token into authorities (application-roles model:
- * the token only admits via the entry role; business roles come from the application database).
+ * The ONE place that turns a verified Keycloak token into authorities.
+ * Implements pattern (a) default — application-roles model: the token only admits via the entry
+ * role; business roles and access ban are evaluated per request via ApplicationAccess.
+ * In pattern (b) (token-roles variant, chosen by the application's identity ADR, ADR-00004 point 3),
+ * ApplicationAccess is omitted and authorities map directly from token roles.
+ * principal-claim (example: personal_number) is configuration-driven.
  * Signature, issuer, audience, azp and expiry are already checked by the
  * JwtDecoder when this runs. Not yet verified by a build in this repository.
  */

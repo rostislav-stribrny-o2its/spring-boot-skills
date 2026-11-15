@@ -3,16 +3,16 @@ name: be-oauth2-resource-server
 description: >
   Java/Spring backend: use when securing the API with Keycloak as a stateless OAuth2 resource
   server — JWT validation (issuer, JWKS, RS256, audience, azp, clock skew), Keycloak roles and
-  application roles to authorities, @PreAuthorize with role constants, the /api/users/me status
-  endpoint, CORS/CSRF for a bearer API, or the lib-security module.
+  application roles to authorities, @PreAuthorize with role constants, the status endpoint
+  (contract-driven, example: /api/users/me), CORS/CSRF for a bearer API, or the lib-security module.
 ---
 
 # OAuth2 resource server with Keycloak
 
 Verified in the stack's reference implementation (`lib-security`, a Keycloak IT in Testcontainers).
 In a new repository it holds once the realm items in "Changes this needs outside the code" exist and
-the Keycloak IT of `be-spring-testing-security` passes. Tables, SQL, the `/api/users/me` body, the
-audit row and a realm example: [reference.md](reference.md).
+the Keycloak IT of `be-spring-testing-security` passes. Tables, SQL, the status endpoint body (example: `/api/users/me`), the audit row and a realm
+example: [reference.md](reference.md).
 
 ## Principles
 
@@ -28,8 +28,10 @@ audit row and a realm example: [reference.md](reference.md).
   repository. Read the project's values in the repository, never invent them: the variable prefix in
   `backend/.env.example` (example: `APP_OIDC_*`), clients, roles and claims in
   `keycloak/config/**/realm.yaml`, the `app.security.*` keys in `application*.yaml`.
-  - Fixed per project, written in `application.yaml`: `principal-claim` (a claim **name**, equal in
-    every environment) and `me-path`.
+  - Fixed per project, written in `application.yaml`: `principal-claim` is a configuration value
+    chosen by the application's identity ADR (example: `personal_number`; a claim name, equal in
+    every environment) and `me-path` matches the API contract (ADR-00006; reference example:
+    `/api/users/me`).
   - From the environment: issuer, JWKS URI, audience, frontend client id, entry role. The shared
     fragment in `lib-security` has no defaults; the application's `application.yaml` may give
     **LOCAL-only** defaults (`localhost` URLs, the project's own client and role names) so a
@@ -128,27 +130,35 @@ Keycloak puts realm roles in `realm_access.roles` and client roles in
 client role of the API client, and only that client's roles count. A realm role of the same name
 works too (the reference realm uses a realm role).
 
-Use the **application-roles model**: the identity provider only admits (one entry role, granted
-through one entry group per environment); business roles are kept by the application in its database:
+The application's identity ADR chooses between two supported role patterns (ADR-00004 point 3):
+
+### (a) Default — application-roles model
+The identity provider only admits (one entry role, granted through one entry group per environment,
+`app.security.entry-role`); business roles and the access ban live in the application's data (reference
+table names such as `persons`, `roles`, `user_access` are examples) and are evaluated on **every request**
+via `ApplicationAccess`:
 
 | Authority | Granted when | Reaches |
 |---|---|---|
-| `ROLE_ENTRY` | the token carries the configured entry role (`app.security.entry-role`) | `/api/users/me` only |
+| `ROLE_ENTRY` | the token carries the configured entry role (`app.security.entry-role`) | status endpoint (`app.security.me-path`, example: `/api/users/me`) only |
 | `ROLE_ACTIVE` | entry role **and** the database says: paired, not suspended, at least one role | `/api/**` (URL rule) |
 | `ROLE_<CODE>` | each business role from the application database, only when `ACTIVE` | operations via `@PreAuthorize` |
 
 - Other roles in the token are **ignored**: business roles live in the application database, never in
   the token or in directory (AD) groups. Never grant the same decision from both sources.
 - **Principal** = the claim that identifies the person (`app.security.principal-claim`; example:
-  `personal_number`) — a stable business id, never e-mail, username or login (they change on renames
-  and mergers). Accounts are paired to persons by it; no match → unpaired, no rights. A token without
-  it → `401`. `sub` (the technical account id) is passed on only for audit.
+  `personal_number`) — a stable business id chosen by the application's identity ADR, never e-mail,
+  username or login (they change on renames and mergers). Accounts are paired to persons by it; no match →
+  unpaired, no rights. A token without it → `401`. `sub` (the technical account id) is passed on only for audit.
 - **Every request** asks `ApplicationAccess` (one indexed query: person, suspension, role codes):
   a ban (person gone from the source, employment ended) takes effect once it is written to the
-  database, regardless of token validity, plus an optional cache of at most 5 minutes. Start without a cache; add one (Spring Cache, `expireAfterWrite` ≤ 5 min) only
-  when measurement shows the load matters.
-- **Token-roles variant** (an application without its own role data): map every token role to
-  `ROLE_<NAME>` instead of calling `ApplicationAccess`. Only when the application keeps no roles.
+  database, regardless of token validity, plus an optional cache of at most 5 minutes. Start without a
+  cache; add one (Spring Cache, `expireAfterWrite` ≤ 5 min) only when measurement shows the load matters.
+
+### (b) Token-roles variant
+Only for an application without its own role data — roles come from the token (`realm_access` /
+`resource_access.<role-client-id>`) mapped to `ROLE_<NAME>` instead of calling `ApplicationAccess`.
+The application's identity ADR chooses the pattern (ADR-00004 point 3).
 
 ## Method security and role constants
 
@@ -191,19 +201,19 @@ See `templates/LibSecurityConfiguration.java`:
   `/problems/no-access` with `reason` (`UNPAIRED`, `NO_ROLE`, `SUSPENDED`) on **any** call; everyone
   else `403` `/problems/access-denied`.
 
-## `/api/users/me`
+## Status endpoint (contract-driven, example: `/api/users/me`)
 
-The frontend loads `GET /api/users/me` right after sign-in; the answer decides whether the
+The frontend loads the status endpoint right after sign-in; the answer decides whether the
 application or the "no access" screen is shown. It is the one status endpoint: it returns identity,
-roles and permissions, or a refusal with a reason. The exact path is the contract's; these skills use
-`/api/users/me` (no version segment, ADR-00007 point 12), and
-`app.security.me-path` must carry the same value.
+roles and permissions, or a refusal with a reason. The exact path is set by the API contract
+(ADR-00006, not ADR-00004); these skills use `/api/users/me` as the reference example (no version
+segment, ADR-00007 point 12), and `app.security.me-path` must carry the same value.
 
 - Callable with `ROLE_ENTRY` alone; the backend decides from its database.
-- `200` → `id`, `personalNumber`, `email`, `fullName` (display name from the person table, never from
-  the token), `paired`, `suspended`, `roles`, `permissions` (codes the frontend mirrors for display
-  only; the backend authorises every endpoint itself). `Cache-Control: no-store`. Shape and tables:
-  [reference.md](reference.md).
+- `200` → `id`, `personalNumber` (example principal field per API contract), `email`, `fullName`
+  (display name from the person table, never from the token), `paired`, `suspended`, `roles`,
+  `permissions` (codes the frontend mirrors for display only; the backend authorises every endpoint
+  itself). `Cache-Control: no-store`. Shape and tables: [reference.md](reference.md).
 - `403` `application/problem+json`, `type` `/problems/no-access`, `reason` `UNPAIRED` · `NO_ROLE` ·
   `SUSPENDED`. The frontend shows the reason and keeps the user signed in.
 - An unpaired account is audited with its `sub` (stored only for audit, never a key) as a row of the
@@ -239,7 +249,7 @@ missing as a separate task. Details, format (keycloak-config-cli YAML) and a com
 - Agent omits `audiences` or the `azp` validator — tokens for other clients are accepted
 - Agent keeps HS256 or adds a shared secret — RS256 with JWKS only
 - Agent raises clock skew to make tests pass — fix the clock or the test token
-- Agent grants business roles from token claims — application database only; the token gives `ENTRY`
+- Agent grants business roles from token claims — application database only (pattern a default); token roles are allowed only when the application's identity ADR explicitly selects pattern (b) (ADR-00004 point 3)
 - Agent identifies people by `sub`, e-mail or username — the principal claim (example: `personal_number`)
 - Agent writes role strings in `@PreAuthorize` — constants from `Roles`
 - Agent leaves an operation without `@PreAuthorize` or relies on `authenticated()` — every operation needs a concrete role
