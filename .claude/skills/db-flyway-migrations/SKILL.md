@@ -44,7 +44,7 @@ silently never run (both are in the application template of `be-maven-reactor`):
   - The `integration` migrations create only the service's own tables (runs, change records,
     mirror, staging, view state, ShedLock).
   - The **backend** migrations create the control tables in the backend schema (example:
-    `integration_control`) and `GRANT USAGE ON SCHEMA` + `GRANT SELECT` on them to the scheduler's
+    `integration_controls`) and `GRANT USAGE ON SCHEMA` + `GRANT SELECT` on them to the scheduler's
     runtime role (placeholder `${scheduler_role}`); that role must already exist (admin script).
   - So on the very first start nothing references a table that does not exist yet: the scheduler
     reads `backend.<control table>` only at its ticks, and treats a missing table as "no view to
@@ -57,7 +57,7 @@ silently never run (both are in the application template of `be-maven-reactor`):
 **`search_path` — one rule for every login:** each application's logins see **its own schema**
 first, so its own tables are written **unqualified** everywhere (SQL, `@Table`, migrations); a table
 of the **other** application's schema is always **qualified** (`integration.run`,
-`backend.integration_control`).
+`backend.integration_controls`).
 
 - runtime login: `spring.datasource.hikari.schema: <own schema>` (Hikari sets it on every
   connection; PostgreSQL's default `"$user", public` would find nothing);
@@ -129,7 +129,7 @@ REVOKE UPDATE, DELETE ON integration_change_records FROM "${runtime_role}";
 
 -- backend: the scheduler may read the control tables it is driven by
 GRANT USAGE ON SCHEMA ${flyway:defaultSchema} TO "${scheduler_role}";
-GRANT SELECT ON TABLE integration_control TO "${scheduler_role}";
+GRANT SELECT ON TABLE integration_controls TO "${scheduler_role}";
 ```
 
 ## Location and File Naming
