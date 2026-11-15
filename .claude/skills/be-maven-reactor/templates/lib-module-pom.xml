@@ -1,10 +1,15 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<!-- Template: backend/lib-<topic>/pom.xml - a shared library (here lib-db).
+<!-- Template: backend/lib-<topic>/pom.xml - a shared library. EXAMPLE: lib-db (JDBC variant).
      One entry @Configuration in package app.lib.<topic>; no spring-boot-maven-plugin; no versions.
-     lib-core: no web starter at all (scheduler-service imports it).
-     lib-web: lib-core + spring-boot-starter-webmvc + io.micrometer:micrometer-tracing
-              + org.postgresql:postgresql (constraint names in the problem handler).
-     lib-security: lib-web + spring-boot-starter-security-oauth2-resource-server. -->
+     MINIMAL library (start here for a new lib-<topic>): lib-core + lombok (provided)
+              + spring-boot-starter-test and archunit-junit5 (test); add only what its code uses.
+     Variants on top of the minimal one:
+     JDBC     (lib-db):       + spring-boot-starter-data-jdbc, test: -data-jdbc-test, spring-boot-testcontainers,
+                              testcontainers-postgresql (as below)
+     web      (lib-web):      + spring-boot-starter-webmvc + io.micrometer:micrometer-tracing
+                              + org.postgresql:postgresql (constraint names in the problem handler)
+     security (lib-security): lib-web + spring-boot-starter-security-oauth2-resource-server.
+     lib-core itself: no web starter at all (scheduler-service imports it). -->
 <project xmlns="http://maven.apache.org/POM/4.0.0"
          xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
          xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">

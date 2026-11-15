@@ -1,9 +1,9 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!-- Template: backend/pom.xml - parent POM and reactor root (ADR-00002, point 2).
-     Literal versions below are those of the repository's existing backend/pom.xml.
-     PIN_IN_PARENT_POM = not pinned yet: look up the latest release on Maven Central whose release
-     notes state support for JDK 25 / Spring Boot 4 and write it here as a literal (never a range).
-     Not yet verified by a build in this repository. -->
+     Literal versions below are those of the stack's reference implementation. The repository's
+     existing backend/pom.xml always wins; use these only for entries it does not have yet.
+     The reference backend/pom.xml additionally carries the JaCoCo unit-coverage check
+     (jacoco.unit.line.min) and flyway-maven-plugin settings used by backend/scripts/db.sh. -->
 <project xmlns="http://maven.apache.org/POM/4.0.0"
          xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
          xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
@@ -37,7 +37,7 @@
         <java.version>25</java.version>
         <!-- backend/.mvn/ makes this the reactor root; specs/ lives one level up. -->
         <repo.root>${maven.multiModuleProjectDirectory}/..</repo.root>
-        <!-- Application segment of specs/<app>/openapi/... -->
+        <!-- Application segment of specs/<app>/openapi/...: the folder name under specs/ (matches config/.copier-answers.yml) -->
         <spec.app>app</spec.app>
 
         <!-- Versions not managed by the Spring Boot BOM: only here. -->
@@ -47,19 +47,25 @@
         <archunit.version>1.5.1</archunit.version>
         <jacoco.version>0.8.16</jacoco.version>
         <spotless.version>3.11.0</spotless.version>
-        <springdoc-openapi-maven-plugin.version>PIN_IN_PARENT_POM</springdoc-openapi-maven-plugin.version>
-        <mapstruct.version>PIN_IN_PARENT_POM</mapstruct.version>
-        <lombok-mapstruct-binding.version>PIN_IN_PARENT_POM</lombok-mapstruct-binding.version>
-        <shedlock.version>PIN_IN_PARENT_POM</shedlock.version>
+        <springdoc-openapi-maven-plugin.version>1.6</springdoc-openapi-maven-plugin.version>
+        <mapstruct.version>1.6.3</mapstruct.version>
+        <lombok-mapstruct-binding.version>0.2.0</lombok-mapstruct-binding.version>
+        <shedlock.version>7.11.0</shedlock.version>
         <!-- a release for Testcontainers 2 and the Keycloak version of docker-compose -->
-        <testcontainers-keycloak.version>PIN_IN_PARENT_POM</testcontainers-keycloak.version>
+        <testcontainers-keycloak.version>4.4.0</testcontainers-keycloak.version>
+        <spotbugs-maven-plugin.version>4.10.5.0</spotbugs-maven-plugin.version>
+        <findsecbugs-plugin.version>1.14.0</findsecbugs-plugin.version>
+        <cyclonedx-maven-plugin.version>2.9.3</cyclonedx-maven-plugin.version>
 
-        <!-- Tests: -DskipITs skips Failsafe only. The argLines are filled by JaCoCo. -->
+        <!-- Tests: every verify runs the ITs (CI and locally); -DskipITs skips Failsafe only.
+             The argLines are filled by JaCoCo. -->
         <skipITs>false</skipITs>
         <surefireArgLine></surefireArgLine>
         <failsafeArgLine></failsafeArgLine>
         <!-- Locally -Dit.excludedGroups=keycloak skips the Keycloak IT; CI leaves it empty. -->
         <it.excludedGroups></it.excludedGroups>
+        <!-- -Dsast.failOnError=false = SAST report-only -->
+        <sast.failOnError>true</sast.failOnError>
     </properties>
 
     <dependencyManagement>
@@ -161,7 +167,7 @@
                                         <exclude>jakarta.persistence:*</exclude>
                                         <exclude>org.hibernate.orm:*</exclude>
                                         <exclude>org.springframework.boot:spring-boot-starter-data-jpa</exclude>
-                                        <!-- ADR-00001 point 5: no message broker, no Redis -->
+                                        <!-- No message broker, no Redis: queues and job locks live in PostgreSQL -->
                                         <exclude>org.springframework.amqp:*</exclude>
                                         <exclude>org.springframework.kafka:*</exclude>
                                         <exclude>org.apache.kafka:*</exclude>
@@ -247,4 +253,76 @@
             </plugin>
         </plugins>
     </build>
+
+    <profiles>
+        <!-- Offline SAST (ADR-00009 points 2, 6): -Psast or SAST_ENABLED=true (CI sets it). -->
+        <profile>
+            <id>sast</id>
+            <activation>
+                <property><name>env.SAST_ENABLED</name><value>true</value></property>
+            </activation>
+            <build>
+                <plugins>
+                    <plugin>
+                        <groupId>com.github.spotbugs</groupId>
+                        <artifactId>spotbugs-maven-plugin</artifactId>
+                        <version>${spotbugs-maven-plugin.version}</version>
+                        <configuration>
+                            <effort>Max</effort>
+                            <threshold>Medium</threshold>
+                            <xmlOutput>true</xmlOutput>
+                            <failOnError>${sast.failOnError}</failOnError>
+                            <excludeFilterFile>${maven.multiModuleProjectDirectory}/spotbugs-exclude.xml</excludeFilterFile>
+                            <plugins>
+                                <plugin>
+                                    <groupId>com.h3xstream.findsecbugs</groupId>
+                                    <artifactId>findsecbugs-plugin</artifactId>
+                                    <version>${findsecbugs-plugin.version}</version>
+                                </plugin>
+                            </plugins>
+                        </configuration>
+                        <executions>
+                            <execution>
+                                <id>spotbugs-check</id>
+                                <phase>verify</phase>
+                                <goals><goal>check</goal></goals>
+                            </execution>
+                        </executions>
+                    </plugin>
+                </plugins>
+            </build>
+        </profile>
+
+        <!-- Offline SCA / SBOM (ADR-00009 points 2, 7): -Psca or SCA_ENABLED=true (CI sets it). -->
+        <profile>
+            <id>sca</id>
+            <activation>
+                <property><name>env.SCA_ENABLED</name><value>true</value></property>
+            </activation>
+            <build>
+                <plugins>
+                    <plugin>
+                        <groupId>org.cyclonedx</groupId>
+                        <artifactId>cyclonedx-maven-plugin</artifactId>
+                        <version>${cyclonedx-maven-plugin.version}</version>
+                        <configuration>
+                            <projectType>application</projectType>
+                            <schemaVersion>1.6</schemaVersion>
+                            <includeBomSerialNumber>true</includeBomSerialNumber>
+                            <includeLicenseText>false</includeLicenseText>
+                            <outputFormat>all</outputFormat>
+                            <outputName>bom</outputName>
+                        </configuration>
+                        <executions>
+                            <execution>
+                                <id>default</id>
+                                <phase>verify</phase>
+                                <goals><goal>makeAggregateBom</goal></goals>
+                            </execution>
+                        </executions>
+                    </plugin>
+                </plugins>
+            </build>
+        </profile>
+    </profiles>
 </project>

@@ -6,15 +6,16 @@ import java.util.Set;
 /**
  * Port to the application's own access data (an interface because it crosses the module
  * boundary, ADR-00002 point 7). backend-service implements it with one indexed read through
- * JdbcClient (be-jdbc-client-reads): person by principal, suspension, role codes.
- * Called on every authenticated request (ADR-00004 point 6: a ban applies once it is in the
- * database, plus an optional cache of at most 5 minutes).
+ * JdbcClient (be-jdbc-client-reads): person by principal, suspension, role codes. Tables, SQL and
+ * the implementing service: reference.md of this skill.
+ * Called on every authenticated request: a ban applies once it is in the database, regardless of
+ * token validity, plus an optional cache of at most 5 minutes.
  */
 public interface ApplicationAccess {
 
     /**
-     * @param principal      value of the principal claim (e.g. personal number)
-     * @param accountSubject Keycloak "sub"; only for audit, never a key (ADR-00004 point 5)
+     * @param principal      value of the principal claim (example: personal number)
+     * @param accountSubject Keycloak "sub"; only for audit, never a key
      */
     AccessDecision decide(String principal, String accountSubject);
 

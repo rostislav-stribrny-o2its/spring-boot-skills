@@ -21,7 +21,7 @@ builds error bodies.
 | missing, invalid or expired token | `401` | — | **empty**; reason in `WWW-Authenticate` (security chain, `be-oauth2-resource-server`) |
 | unreadable body, wrong parameter type | `400` | `/problems/bad-request` | generic text |
 | invalid input (bean validation, field rules) | `422` | `/problems/validation` | `errors`: list of `{field, code, message}` |
-| person has no access (unpaired, no role, suspended) — on the status endpoint **and** any other call | `403` | `/problems/no-access` | `reason`: `UNPAIRED` · `NO_ROLE` · `SUSPENDED` |
+| person has no access to the application — on the status endpoint **and** any other call | `403` | `/problems/no-access` | `reason` (*example reasons:* `UNPAIRED` · `NO_ROLE` · `SUSPENDED`) |
 | missing permission to an operation or record | `403` | `/problems/access-denied` | generic text |
 | not found | `404` | `/problems/not-found` | fixed noun, no ID |
 | business rule violated | `409` | `/problems/<rule-code>` | fixed text |

@@ -13,8 +13,8 @@ import org.springframework.validation.annotation.Validated;
 @ConfigurationProperties(prefix = "app.security")
 public record AppSecurityProperties(
         @NotBlank String clientId,        // expected azp: the frontend client
-        @NotBlank String principalClaim,  // claim identifying the person (e.g. personal_number)
-        @NotBlank String entryRole,       // Keycloak role that admits a user (e.g. app-user)
+        @NotBlank String principalClaim,  // claim identifying the person (example: personal_number)
+        @NotBlank String entryRole,       // Keycloak role that admits a user (example: app-user)
         String roleClientId,              // client whose client roles are read; null = realm roles only
         @DefaultValue("/api/users/me") @NotBlank String mePath) {  // status endpoint = the contract's path
 }

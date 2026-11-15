@@ -167,7 +167,10 @@ changes to a child entity must go through the root and its `save(...)`.
 ## Retrying a Deadlock — once
 
 ADR-00008 point 14: a **deadlock** in the database is retried **once**, automatically, around the
-whole transaction; a **version conflict is not retried** (above). Retry support ships in core Spring
+whole transaction; a **version conflict is not retried** (above). Deadlocks are prevented first by
+short transactions and a deterministic lock order (e.g. sort IDs before a bulk change); the retry,
+after a full rollback at the use-case boundary (outer facade), is only for operations explicitly
+marked idempotent. Retry support ships in core Spring
 Framework (`org.springframework.resilience.annotation`) — no Spring Retry dependency. Enable once
 with `@EnableResilientMethods`:
 

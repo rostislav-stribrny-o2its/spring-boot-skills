@@ -60,7 +60,7 @@ public interface UsersEndpoint {
 
     @Operation(operationId = "getMe", summary = "Identity, roles and permissions of the caller")
     @GetMapping("/me")
-    default User getMe() {                 // record app.api.user.User -> generated UserDto
+    default UserResponse getMe() {         // record app.api.main.user.UserResponse -> generated UserResponseDto
         throw new NotImplementedException();
     }
 }

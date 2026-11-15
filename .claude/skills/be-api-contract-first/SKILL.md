@@ -43,8 +43,15 @@ backend-service: generated ...Api,               frontend: generated TypeScript 
 | `backend-service/target/generated-sources/**` | the generator only - never edit, never commit |
 | `backend/openapi-generator.json`, `backend/openapi-templates-customization/**`, `backend/openapi-templates-original/**` | controlled template change only ([template-customizations.md](template-customizations.md)), never as part of a feature change |
 
-An API change follows the prescribed "API change" steps and checklist of the task (ADR-00006,
-point 8): description -> model -> regenerated spec -> backend (and later frontend) compile again.
+An API change follows the "API change" steps (ADR-00006, point 8): description -> model ->
+regenerated spec -> backend (and later frontend) compile again. Agreement between code and
+description is confirmed by the reviewer of the change, never by a tool comparing spec and
+description. The full file list for adding a field (description, model, spec, migration, domain,
+entity, row, mappers, tests) is the "Adding a field" checklist in `be-backend-layers`.
+
+`docs/design/backend/` (areas, approved `x-` extensions) may not exist yet in a new repository.
+Then: one area `main`, no `x-` extensions at all, and the contract description goes into the pull
+request text until the folder is created.
 
 ## 2. Writing the API model (`api-model`, package `app.api..`)
 
@@ -55,7 +62,9 @@ point 8): description -> model -> regenerated spec -> backend (and later fronten
 - Every endpoint interface carries `@ApiSpec(area = "main", visibility = PUBLIC, module = "backend")`
   - it decides which spec file the operations land in: `area` = an area name from the list in
   `docs/design/backend/` ("main" is the example used throughout this skill), `visibility` =
-  who may call it (phase 1: only `PUBLIC`, ADR-00006 point 3), `module` = the application without
+  who may call it (ADR-00006 point 3: `PUBLIC` = public interface, `SERVER` = reachable inside the
+  internal infrastructure, `INTERNAL` = within one application only; *example:* an application
+  whose only API is the main backend's uses `PUBLIC` alone), `module` = the application without
   `-service`. Templates: `templates/ApiSpec.java` (annotation, exception, example interface).
 - `operationId`: readable camelCase verb + noun (`listProjects`, `searchPeople`, `updatePlanRows`);
   it becomes the generated method name. `@Tag` groups operations into one generated interface.
@@ -80,15 +89,17 @@ point 8): description -> model -> regenerated spec -> backend (and later fronten
   generator. `float` nowhere. The month `YYYY-MM` encoding is open (decided by the architecture
   owner in `docs/design/`) - ask, do not guess.
 - Required fields are `required`; a field the model allows empty is `nullable: true` and carries
-  `null`. An omitted field never stands for `null`.
+  `null`. An omitted field never stands for `null`. How to write each case in the record
+  (`@NotNull`, `@Schema(requiredMode = REQUIRED, nullable = true)`, `@Nullable`), length limits
+  (`@Size(max = n)` → `maxLength` → `422`) and which changes need the `api-breaking` label:
+  [fields.md](fields.md).
 - Every field has a concrete type. A free-form object or untyped map only with a reason written in
   the contract description. Lists always declare their item type.
 - System enumerations are enums in the contract (`enumAsRef = true`); administrator-managed code
   lists are resources with `id`, `code`, `name`, not enums. Adding an enum value is compatible;
-  removing or renaming is breaking. Whenever introducing or changing a value set, classify it
-  explicitly (*fixed code enum* vs. *managed lookup table with a designated administrator role* vs.
-  *constrained free text*) and keep its allowed values and labels aligned across DB constraints/lookup
-  migrations, the `api-model` schema, backend domain mapping, and frontend translations.
+  removing or renaming is breaking. Classify every value set (*fixed enum* / *managed lookup table*
+  / *constrained free text*) and keep its values, and every length or range limit, equal in the DB,
+  the `api-model`, the domain and the frontend translations.
 - Polymorphism (type hierarchies, unions): open (decided by the architecture owner, ADR-00007) - do
   not introduce it without that decision.
 
@@ -99,7 +110,7 @@ point 8): description -> model -> regenerated spec -> backend (and later fronten
   `be-problem-details-rfc9457`.
 - `422` invalid input with a list of field errors (field, code, text); `400` unreadable body or
   wrong parameter type; `403` in two distinct types: `/problems/no-access` with `reason`
-  (`UNPAIRED`, `NO_ROLE`, `SUSPENDED`) when the person has no access to the application, and
+  (*example reasons:* `UNPAIRED`, `NO_ROLE`, `SUSPENDED`) when the person has no access to the application, and
   `/problems/access-denied` for a missing permission to an operation or record; `404` not found;
   `409` business rule violation **or** stale record version (distinct types). Error texts never
   repeat submitted values. No `423`, no `429`.
@@ -138,8 +149,9 @@ model** and reading the documents from springdoc (ADR-00006, point 2). Templates
   `springdoc.writer-with-default-pretty-printer: true`; a global customizer forces
   `openapi: 3.0.3` and fixed `servers`. No timestamps, no build-machine URLs.
 - **Build** (Maven, in `api-spec`): `build-helper-maven-plugin:reserve-network-port` in `validate`
-  (reserves dynamic ephemeral `api-spec.port` and `api-spec.jmxPort` — never define them in static
-  `<properties>`, see `/be-spring-boot-layers`), `spring-boot-maven-plugin:start` in
+  (reserves dynamic ephemeral `api-spec.port` and `api-spec.jmxPort`; never define them in static
+  `<properties>` — Maven would resolve them before the plugin runs; version from the Boot parent),
+  `spring-boot-maven-plugin:start` in
   `pre-integration-test`, `springdoc-openapi-maven-plugin:generate` in `integration-test` - one
   execution per spec file, `apiDocsUrl` `.../v3/api-docs/<group>`, `outputDir`
   `${repo.root}/specs/<app>/openapi/<visibility>/<area>`, `outputFileName`
@@ -148,13 +160,11 @@ model** and reading the documents from springdoc (ADR-00006, point 2). Templates
   When a spec file disappears (area removed), delete it in the same PR.
 - File naming: the backend's public spec of area `main` is
   `specs/<app>/openapi/public/main/backend-service-public.json`.
-- **Switching an existing repository:** when this layout replaces an earlier export (e.g. a
-  `be-service-public.json` written by an `exec-maven-plugin` run without a server), delete the old
-  file and the old export execution in the same PR; the freshness check does not notice a stale
-  file nobody writes any more.
+- Switching an existing repository from an earlier export or generator mode:
+  [template-customizations.md](template-customizations.md), "Switching".
 
-Not yet verified by a build in this repository: springdoc 3 honouring the forced `3.0.3`, and the
-start/stop goals with Spring Boot 4.1.
+Verified in the stack's reference implementation (springdoc 3 with the forced `3.0.3`, start/stop
+with Spring Boot 4.1, dynamic ports).
 
 ## 4. Generating the backend code (`backend-service`)
 
@@ -163,11 +173,6 @@ this skill set uses; the ADRs fix only the generator and that its configuration 
 change under control (ADR-00006, point 6). Configuration: `backend/openapi-generator.json`
 (`templates/openapi-generator.json`), version and plugin settings in the parent POM, executions in
 `backend-service` (`templates/backend-service-openapi-fragment.xml`).
-
-**Switching from `interfaceOnly`:** an earlier configuration with `interfaceOnly: true`,
-`skipDefaultInterface: true` and no `modelNameSuffix` is replaced by the table below in one
-controlled change (its own PR, together with the template customizations); feature code written
-against the earlier interfaces moves into delegates in that PR.
 
 | Setting | Value | Why |
 |---|---|---|
@@ -198,33 +203,31 @@ result in `ResponseEntity`. No business logic, no `@Transactional`, no repositor
 package app.backend.user.api;
 
 import app.backend.api.generated.main.UsersApiDelegate;
-import app.backend.api.generated.main.model.UserDto;
-import app.backend.user.service.CurrentUserQuery;
+import app.backend.api.generated.main.model.UserResponseDto;
+import app.backend.user.service.UserAccessService;
 import app.lib.security.AppAuthentication;
 import app.lib.security.Roles;
-import lombok.RequiredArgsConstructor;
-import org.springframework.http.CacheControl;
-import org.springframework.http.ResponseEntity;
-import org.springframework.security.access.prepost.PreAuthorize;
-import org.springframework.stereotype.Component;
+// lombok, CacheControl, ResponseEntity, PreAuthorize, Component imports omitted
 
 @Component
 @RequiredArgsConstructor
 public class UsersApiDelegateImpl implements UsersApiDelegate {
 
-    private final CurrentUserQuery currentUserQuery;
+    private final UserAccessService userAccessService;
     private final UserApiMapper mapper;
 
     @Override
     @PreAuthorize(Roles.HAS_ENTRY)
-    public ResponseEntity<UserDto> getMe() {
-        var me = currentUserQuery.me(AppAuthentication.current());
-        return ResponseEntity.ok().cacheControl(CacheControl.noStore()).body(mapper.toDto(me));
+    public ResponseEntity<UserResponseDto> getMe() {
+        var profile = userAccessService.loadProfile(AppAuthentication.current());
+        return ResponseEntity.ok().cacheControl(CacheControl.noStore()).body(mapper.toDto(profile));
     }
 }
 ```
 
-- The `...Impl` name is allowed because the interface is generated (ADR-00002, point 7).
+- The `...Impl` name is allowed because the interface is generated (ADR-00002, point 7: a service
+  interface exists only when a tool generates it, at a module or external-system boundary, or when
+  there are several implementations; otherwise a concrete class).
 - Every public delegate method carries `@PreAuthorize` with a role constant
   (`be-oauth2-resource-server`); ArchUnit checks it (`be-archunit-rules`).
 - Every operation the delegate does not override answers `501 Not Implemented`; if the delegate

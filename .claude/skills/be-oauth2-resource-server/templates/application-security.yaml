@@ -1,13 +1,20 @@
-# Fragment of backend-service application.yaml. Every value comes from the environment
-# (ADR-00003 point 7); no URL or client id is a constant in code or in a committed profile file.
+# Fragment of the security configuration (lib-security). Environment-specific values come from the
+# environment; this shared fragment carries no defaults (an application's application.yaml may add
+# LOCAL-only defaults). principal-claim and me-path are fixed per project.
 #
-# Examples (realm "app"; Keycloak behind the app origin under /auth):
-#   APP_OIDC_ISSUER_URI  LOCAL  http://localhost:3001/auth/realms/app
-#                            env    https://<app host>/auth/realms/app   (= KC_HOSTNAME + /realms/app)
-#   APP_OIDC_JWKS_URI    backend on the host   http://localhost:8180/auth/realms/app/protocol/openid-connect/certs
-#                            backend in a container http://keycloak:8080/auth/realms/app/protocol/openid-connect/certs
-#   APP_OIDC_AUDIENCE    API audience / API client id, e.g. app-api
-#   APP_OIDC_CLIENT_ID   frontend client (azp), e.g. app-spa
+# APP_ is the EXAMPLE prefix: use the project's prefix from backend/.env.example. Client ids,
+# entry role and principal claim: read them in keycloak/config/**/realm.yaml.
+# EXAMPLE values (realm "app"; Keycloak behind the app origin under /auth) - not rules. Find the real
+# ones: issuer = KC_HOSTNAME of the Keycloak service + /realms/<realm> (docker-compose.yml, .env);
+# JWKS host/port = Keycloak's service name and container port (in a container) or its published
+# host port (backend on the host), both from docker-compose.yml.
+#   APP_OIDC_ISSUER_URI    LOCAL  http://localhost:3001/auth/realms/app
+#                          env    https://<app host>/auth/realms/app   (= KC_HOSTNAME + /realms/app)
+#   APP_OIDC_JWK_SET_URI   backend on the host    http://localhost:8180/auth/realms/app/protocol/openid-connect/certs
+#                          backend in a container http://keycloak:8080/auth/realms/app/protocol/openid-connect/certs
+#                          (an older APP_OIDC_JWKS_URI is read only as a fallback)
+#   APP_OIDC_AUDIENCE      API audience / API client id, example: app-api
+#   APP_OIDC_CLIENT_ID     frontend client (azp), example: app-frontend
 spring:
   security:
     oauth2:
@@ -16,16 +23,16 @@ spring:
           # Compared byte for byte with the token's "iss": the PUBLIC address, no trailing slash.
           issuer-uri: ${APP_OIDC_ISSUER_URI}
           # Where the backend fetches the public keys; may be internal. Setting it avoids discovery.
-          jwk-set-uri: ${APP_OIDC_JWKS_URI}
+          jwk-set-uri: ${APP_OIDC_JWK_SET_URI:${APP_OIDC_JWKS_URI}}
           jws-algorithms: RS256
           audiences: ${APP_OIDC_AUDIENCE}
 
 app:
   security:
     client-id: ${APP_OIDC_CLIENT_ID}
-    principal-claim: personal_number
-    entry-role: ${APP_OIDC_ENTRY_ROLE:app-user}
-    role-client-id: ${APP_OIDC_AUDIENCE}   # the entry role is a client role of the API client
+    principal-claim: personal_number                 # project constant (claim NAME); example value
+    entry-role: ${APP_OIDC_ENTRY_ROLE:app-user}      # default = the project's own entry role name (example)
+    role-client-id: ${APP_OIDC_AUDIENCE}             # always the API audience: client roles count only for the API client
     me-path: /api/users/me                     # status endpoint; equal to the path in the API contract
 # Tests: no environment variable exists there; the shared IT base class sets these keys once
 # (be-testing-conventions), so the context starts and every IT shares one context.
