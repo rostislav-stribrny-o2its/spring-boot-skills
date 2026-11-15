@@ -7,7 +7,7 @@ import org.springframework.http.HttpStatus;
 
 /**
  * The authenticated person has no access to the application: account unpaired, no role, or
- * suspended (ADR-00007 point 9).
+ * suspended (evaluated via ApplicationAccess in pattern (a) default, ADR-00004 point 3, ADR-00007 point 9).
  * Requires lib-web with app.lib.web.error.ProblemException(HttpStatus status, String code, String detail)
  * and its properties() hook (template in be-problem-details-rfc9457).
  * The global handler of lib-web (be-problem-details-rfc9457) turns every ProblemException into

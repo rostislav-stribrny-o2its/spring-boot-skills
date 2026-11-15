@@ -32,15 +32,17 @@ PostgreSQL 18             ← schema from Flyway only; integrity constraints, no
 ## Applications and libraries
 
 - **`backend-service`** — the REST API for the frontend, all business logic, its own scheduled jobs.
-- **`scheduler-service`** — reads source systems into the `integration` schema; no domain model,
-  no layers of this skill (see `be-scheduler-service`).
+- **`scheduler-service`** (optional, present only in applications that read source systems, ADR-00002 point 2) —
+  reads source systems into the `integration` schema; no domain model, no layers of this skill (see
+  `be-scheduler-service`). Applications without source systems omit `scheduler-service` and schema `integration`.
 - **Role is decided by the Maven module, never by a Spring profile.** Profiles only select
   environment behaviour (LOCAL, DEV, TEST, PROD). A profile that switches a role's classes on or
   off is a review finding (ADR-00002 point 2).
 - **Shared libraries `lib-<topic>`** (`lib-core`, `lib-db`, `lib-web`, `lib-security`) carry code
-  both applications or several modules need; each has one entry `@Configuration`, composed by the
-  application with explicit `@Import`. Module list, what lives in which library, the entry
-  configuration and main-class placement: `be-maven-reactor` (the only home of that pattern).
+  all applications (or `backend-service` alone when no scheduler) or several modules need; each has one
+  entry `@Configuration`, composed by the application with explicit `@Import`. Module list, what lives in
+  which library, the entry configuration and main-class placement: `be-maven-reactor` (the only home of
+  that pattern).
 
 ## Packages
 
@@ -63,8 +65,8 @@ app.lib.<topic>..                             shared library code (one entry @Co
 A module is a package of code, not a database schema: the backend has one schema
 (ADR-00008 point 12; migrations run as the schema owner, the application at runtime under a role
 that may not change the schema). SQL and `@Table` names of that schema are unqualified (the connection's
-`search_path` is the backend schema); tables of schema `integration` are always qualified
-(`db-flyway-migrations`).
+`search_path` is the backend schema); tables of schema `integration` (optional, present only when
+source systems are integrated) are always qualified (`db-flyway-migrations`).
 
 ## Three object layers (ADR-00008 point 6)
 
@@ -149,7 +151,7 @@ public class OrderService {
 - Takes and returns domain types, commands or `…Row` read models — never `…Dto`, `…Entity`,
   `HttpServletRequest` or `ResponseEntity`.
 - Cross-module calls go service → service. Never into another module's persistence package.
-- Time from an injected `Clock`; "today" in Europe/Prague (ADR-00008 point 15).
+- Time from an injected `Clock`; "today" in the configured application time zone (IANA id, example: Europe/Prague; ADR-00008 point 15).
 
 **Write repository** (`..persistence..`) — a `@Repository` class that wraps a package-private
 Spring Data JDBC `ListCrudRepository<…Entity, Long>` and the `…PersistenceMapper`; exposes only
@@ -160,7 +162,7 @@ domain records; returns the saved copy (it carries the new `id` / `version`). Ag
 parameters, fixed SQL fragments, `…Row` results, pages of at most 500 rows, streams only for
 export and batches (ADR-00008 point 7): `be-jdbc-client-reads`.
 
-Technical tables of `backend-service` (job queue, integration control tables, audit) use SQL via
+Technical tables of `backend-service` (job queue, optional integration control tables when source systems are integrated, audit) use SQL via
 `JdbcClient` without domain model or aggregates; a bulk write from domain objects may use batched
 SQL (ADR-00008 point 4).
 

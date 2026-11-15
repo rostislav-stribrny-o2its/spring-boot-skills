@@ -40,11 +40,13 @@ incompatible changes into expand, migrate, contract.
 
 ## Environments
 
-**Separate step on TEST and PROD.** A one-shot migration container (official Flyway image, pinned by
-digest, running as non-root) carrying the `db/migration` folders of both applications. It is the only
-holder of the owner password and applies the same settings as the application configuration
-(default schema, locations, placeholders, validation), `integration` first, then `backend`. The
-deployment command runs: backup (PROD), stop, migrate, start, health check (ADR-00008 point 12);
+**Separate step in every environment (ADR-00008 point 12).** Migrations run exclusively via a
+one-shot migration container (`dockerfiles/Dockerfile.db-migrate`, official Flyway image, pinned by
+digest, running as non-root) or local migration script (`backend/scripts/db.sh migrate local|deploy`)
+carrying the `db/migration` folders of both applications. It is the only holder of the owner password
+and applies the required settings (default schema, locations, placeholders, validation), `integration`
+first, then `backend`. Applications never hold the owner password and keep `spring.flyway.enabled: false`.
+The deployment command runs: backup (PROD), stop, migrate, start, health check (ADR-00008 point 12);
 where that command lives: open (decided by the architecture owner in `docs/admin-guide/operations/`).
 Keep the Flyway CLI version equal to the Flyway version managed by Spring Boot, so both write the
 same history table format. Reference: `dockerfiles/Dockerfile.db-migrate`, `backend/scripts/db.sh`.
