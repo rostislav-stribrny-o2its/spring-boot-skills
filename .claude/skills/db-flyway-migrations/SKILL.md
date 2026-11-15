@@ -1,25 +1,23 @@
 ---
 name: db-flyway-migrations
 description: >
-  Use when creating database migrations, schema changes, reference data (lookup tables),
-  or any SQL that modifies database structure. Covers Flyway naming (five-digit versions),
-  forward-only fixes, reference data in migrations, CI checks and safe migration patterns
-  for PostgreSQL 18.
+  PostgreSQL/Flyway: use when creating migrations, schema changes, reference data or fictitious
+  LOCAL/DEV data, or when configuring how migrations run per environment (at start on LOCAL/DEV,
+  a separate step on TEST/PROD, owner vs. runtime login, search_path, grants). Covers five-digit
+  naming, forward-only fixes, CI checks and safe migration patterns for PostgreSQL 18.
 ---
 
 # Flyway Migrations
 
-Flyway is the only tool that changes the schema. Hibernate/JPA schema generation is not used
-(the stack has no JPA); nothing creates tables at application start except Flyway.
-
-DDL style (types, keys, lookup tables, normalization) is defined by the `db-design-postgres-tables`
-skill; this skill covers how a migration is named, written, checked and deployed. Lock levels of
-individual DDL statements and large backfills are in `db-postgres-database-migration`.
+Flyway is the only tool that changes the schema (ADR-00008 point 1). Nothing derives DDL from Java;
+the stack has no JPA. DDL style (types, keys, lookup tables) is in `db-design-postgres-tables`; lock
+levels of single statements and large backfills in `db-postgres-database-migration`; safe change
+patterns, baselining and concurrent branches in [migration-patterns.md](migration-patterns.md).
 
 ## Dependencies
 
-Boot's modular starters do NOT pull Flyway in transitively — a data starter alone means
-migrations silently never run. Add the Flyway starter plus the PostgreSQL module:
+Boot 4's modular starters do NOT pull Flyway in transitively — without the Flyway starter migrations
+silently never run (both are in the application template of `be-maven-reactor`):
 
 ```xml
 <dependency>
@@ -32,39 +30,135 @@ migrations silently never run. Add the Flyway starter plus the PostgreSQL module
 </dependency>
 ```
 
-## Location and File Naming
+## Schemas, roles, order
 
-Migrations live in the application module that owns the schema:
+- Each application owns its schema and its own migration history (ADR-00008 point 11). Phase 1 has
+  **one backend schema** (modules are packages, not schemas — ADR-00008 point 12; its name is set in
+  `docs/design/database/`, `backend` in the examples); `scheduler-service` owns schema `integration`.
+- Per schema: an **owner role** that only migrates, and a **runtime role** the application connects
+  with, which cannot change the schema.
+- **The database and the roles are created by the one-time DB admin script**, never by a migration.
+  Migrations grant the runtime role its rights (below).
+- Order: `integration` migrations, then backend migrations, then both applications (ADR-00008 point 12).
+  On LOCAL and DEV the start order of the applications keeps it.
+
+**`search_path` — one rule for every login:** each application's logins see **its own schema**
+first, so its own tables are written **unqualified** everywhere (SQL, `@Table`, migrations); a table
+of the **other** application's schema is always **qualified** (`integration.run`,
+`backend.integration_control`).
+
+- runtime login: `spring.datasource.hikari.schema: <own schema>` (Hikari sets it on every
+  connection; PostgreSQL's default `"$user", public` would find nothing);
+- owner login: Flyway `default-schema: <own schema>` (Flyway sets the `search_path` while it
+  migrates); the separate migration step uses the same setting;
+- an `*IT` connected as the runtime role reads a table of each migration to prove it (CI check 5).
+
+## Migrations per environment
+
+| Environment | When migrations run | Login | Drop schema |
+|---|---|---|---|
+| LOCAL | at application start (Spring Boot Flyway) | owner (`spring.flyway.user`) | allowed — locally only |
+| DEV (reference stack and branch stacks) | at application start | owner | never |
+| TEST | separate step **before** start | owner, known **only** to that step | never |
+| PROD | separate step before start, **after a backup** | owner, only that step | never |
+
+The application always runs with the runtime login (`spring.datasource.*`). On LOCAL and DEV the owner
+password is additionally in the application's environment, used only by Flyway; on TEST and PROD it is
+not there at all (ADR-00008 point 12).
+
+```yaml
+spring:
+  datasource:                                   # runtime login: cannot change the schema
+    url: ${DB_URL}
+    username: ${DB_APP_USER}
+    password: ${DB_APP_PASSWORD}
+    hikari:
+      schema: backend                           # search_path of the runtime login = own schema
+  flyway:
+    enabled: ${DB_MIGRATE_ON_START:false}       # true only on LOCAL and DEV; default off = safe
+    user: ${DB_OWNER_USER:}                     # owner login; empty = Flyway would use the datasource
+    password: ${DB_OWNER_PASSWORD:}             #   login, which is harmless only because enabled=false there
+    schemas: backend                            # schema name per docs/design/database
+    default-schema: backend                     # search_path of the owner login while migrating
+    create-schemas: false                       # the admin script prepares database and roles
+    locations: ${DB_MIGRATION_LOCATIONS:classpath:db/migration}
+    placeholders:
+      runtime_role: ${DB_APP_USER}
+    baseline-on-migrate: false                  # reject non-empty schemas without history
+    validate-on-migrate: true
+    validate-migration-naming: true
+    out-of-order: false
+    clean-disabled: true                        # the application never drops the schema
+    postgresql:
+      transactional-lock: false                 # required for CREATE INDEX CONCURRENTLY
+```
+
+`scheduler-service` uses the same block with `integration` in place of `backend`. Wherever
+`DB_MIGRATE_ON_START=true`, `DB_OWNER_USER`/`DB_OWNER_PASSWORD` must be set too.
+
+**Separate step on TEST and PROD.** A one-shot migration container (official Flyway image, pinned by
+digest, running as non-root) carrying the `db/migration` folders of both applications. It is the only
+holder of the owner password and applies the same settings as above (default schema, locations,
+placeholders, validation). The deployment command runs: backup (PROD), stop, migrate, start, health
+check (ADR-00008 point 12); where that command lives: open (decided by the architecture owner in
+`docs/admin-guide/operations/`). Keep the Flyway CLI version equal to the Flyway version managed by
+Spring Boot, so both write the same history table format.
+
+**Dropping the schema only on LOCAL** (ADR-00008 point 11): reset by recreating the local database
+volume, or Flyway `clean` from the command line against the local database. Never via application
+configuration, never on DEV, TEST or PROD; how DEV and TEST are reset is open (decided by the
+architecture owner, ADR-00008).
+
+## Grants in migrations
+
+Migrations run as the owner, so default privileges cover every later table of the owner:
+
+```sql
+-- V00001__grant_runtime_role.sql   (${flyway:defaultSchema} = the own schema)
+GRANT USAGE ON SCHEMA ${flyway:defaultSchema} TO ${runtime_role};
+ALTER DEFAULT PRIVILEGES IN SCHEMA ${flyway:defaultSchema}
+    GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO ${runtime_role};
+ALTER DEFAULT PRIVILEGES IN SCHEMA ${flyway:defaultSchema}
+    GRANT USAGE, SELECT ON SEQUENCES TO ${runtime_role};
+```
+
+Role and schema names come from placeholders (they differ per environment), never literals.
+Narrower rights (append-only, read-only for support views) are granted explicitly in the migration
+that creates the table. Backend migrations also grant the integration service read access to the
+control tables they create (ADR-00008 point 12).
+
+## Location and File Naming
 
 ```
 <app-module>/src/main/resources/db/migration/
 
 V<NNNNN>__<description>.sql     ← versioned, five digits, run once
-R__<description>.sql            ← repeatable: views and other objects re-created as a whole
+R__<description>.sql            ← repeatable: views and objects re-created as a whole
 
-Examples:
-V00001__create_customer.sql
-V00002__create_order.sql
-V00003__add_shipping_address_to_order.sql
+V00001__grant_runtime_role.sql
+V00002__create_order_status.sql
+V00003__create_customer.sql
+V00004__create_customer_order.sql
 R__order_summary_view.sql
 ```
 
-Rules:
-- Version is always **five digits with leading zeros** (`V00042__`), so files sort correctly
-  in every tool. Flyway reads `00042` as version 42.
+- Version is always **five digits with leading zeros** (`V00042__`) so files sort correctly in every
+  tool; Flyway reads `00042` as version 42.
 - Double underscore `__` between version and description; `_` for spaces in the description.
 - Versions are sequential; never go back and fill gaps.
-- **No undo migrations.** `U…` files are not used. A mistake is fixed by a new forward
-  migration (`V00043__fix_…`), never by editing or reverting the deployed one.
+- **Forward only** (ADR-00008 point 11): no `U…` undo files. A mistake is fixed by a new migration
+  (`V00043__fix_…`), never by editing or reverting the deployed one.
 - **A migration that has run in any shared environment is never modified** — not even a comment
   (the checksum changes and every environment fails validation).
-- `R__` only for objects that are dropped and re-created as a whole (views, functions used by
-  views). Tables, columns, constraints and data always go into `V` migrations.
+- `R__` only for objects dropped and re-created as a whole (views, functions used by views). Tables,
+  columns, constraints and reference data always go into `V` migrations.
+- The ShedLock table of an application is an ordinary `V` migration of that application, in its own
+  schema (DDL in `be-scheduling-shedlock`).
 
 ## Example Migrations
 
 ```sql
--- V00001__create_order_status.sql — lookup table instead of a PostgreSQL ENUM
+-- V00002__create_order_status.sql — lookup table instead of a PostgreSQL ENUM
 CREATE TABLE order_status (
     id          smallint PRIMARY KEY,           -- stable, assigned in the migration
     code        text NOT NULL UNIQUE CHECK (length(code) <= 30),
@@ -76,7 +170,14 @@ INSERT INTO order_status (id, code, name) VALUES
     (2, 'CONFIRMED', 'Confirmed'),
     (3, 'CANCELLED', 'Cancelled');
 
--- V00002__create_customer_order.sql
+-- V00003__create_customer.sql
+CREATE TABLE customer (
+    id          bigint GENERATED ALWAYS AS IDENTITY (MAXVALUE 9007199254740991) PRIMARY KEY,
+    name        text NOT NULL,
+    version     bigint NOT NULL DEFAULT 0
+);
+
+-- V00004__create_customer_order.sql
 CREATE TABLE customer_order (
     id              bigint GENERATED ALWAYS AS IDENTITY (MAXVALUE 9007199254740991) PRIMARY KEY,
     customer_id     bigint NOT NULL REFERENCES customer (id),
@@ -89,184 +190,93 @@ CREATE TABLE customer_order (
 
 CREATE INDEX customer_order_customer_id_idx ON customer_order (customer_id);
 CREATE INDEX customer_order_order_status_id_idx ON customer_order (order_status_id);
-
--- V00003__add_shipping_address_to_customer_order.sql
--- Adding a column — nullable or with a default (safe for existing rows)
-ALTER TABLE customer_order
-    ADD COLUMN shipping_address text,
-    ADD COLUMN shipped_at timestamptz;
 ```
 
-Why these types: IDs are `bigint` with an upper bound of 2^53−1 (`MAXVALUE 9007199254740991`)
-so that they stay exact as JSON numbers in a JavaScript frontend; money and other exact
-decimals are `numeric(p, s)` (mapped to `BigDecimal`), never `real`/`double precision`. Details
-in `db-design-postgres-tables`.
+Table names are unqualified: Flyway's `default-schema` puts them into the own schema. IDs are
+`bigint` bounded by 2^53−1 so they stay exact as JSON numbers; exact decimals are `numeric(p, s)`.
+Details in `db-design-postgres-tables`. (The audit columns `created_by`/`updated_by` of ADR-00008
+point 15 are left out of the examples for brevity.)
 
-## Reference Data vs. Development Data
+## Data migrations over existing rows
 
-- **Reference data** (lookup tables, codes the application logic relies on) is part of the schema:
-  it goes into versioned `V` migrations, with stable explicit IDs. Without it, foreign keys to the
-  lookup table fail on an empty database. Changing reference data = a new `V` migration.
-- **Development and test data** (sample customers, demo orders, test accounts) never goes into
-  migrations. It is loaded by a profile-bound seeder (`@Profile("dev")`, see
-  `templates/DevDataSeeder.java`) or by the test itself.
+When a versioned migration modifies or backfills existing data (rather than pure DDL or static reference rows), verify four safeguards before merge (`db-postgres-database-migration`):
+1. **Batching and lock duration:** bound table lock duration on non-trivial tables (batched updates or `statement_timeout` / `lock_timeout` guards so production traffic is not stalled).
+2. **Pre/post control counts:** assert expected row counts or control aggregates before and after the data transformation (fail the migration transaction immediately if invariants diverge).
+3. **Forward-recovery path:** because modified data does not roll back once committed across releases, document and test the forward-recovery procedure.
+4. **Synthetic or anonymized data only:** validate the migration against synthetic or anonymized data in Testcontainers — never copy raw production personal/sensitive data into test fixtures or AI context.
 
-## Safe Migration Patterns
+## Reference data vs. fictitious data
 
-```sql
--- Safe: add nullable column
-ALTER TABLE customer_order ADD COLUMN notes text;
+- **Reference data** (lookup tables, codes the logic relies on) is part of the schema: versioned `V`
+  migrations with stable explicit IDs, in every environment. Changing it = a new `V` migration.
+- **Fictitious static data** (persons and records to work with right after the first start) exists
+  **only on LOCAL and on DEV branch stacks** — never on TEST, PROD or the DEV reference stack, which
+  reads a source copy and whose synchronisation would suspend fictitious persons (ADR-00008 point 16).
 
--- Safe: add column with a constant default (no table rewrite)
-ALTER TABLE customer_order ADD COLUMN priority integer NOT NULL DEFAULT 0;
-
--- Safe: rename legacy_email → customer_email via expand → migrate → contract, across deploys
--- (illustrative version numbers; the CONCURRENTLY index below is V00006)
--- Step 1 (V00005): add new column (nullable — old instances keep inserting without it)
-ALTER TABLE customer_order ADD COLUMN customer_email text;
--- Step 2 (V00005): backfill — only a small table in the migration itself; a large table is
--- backfilled in batches by an application job between releases (a migration file is ONE
--- transaction; see postgres-database-migration). Deployed code writes both columns meanwhile.
-UPDATE customer_order SET customer_email = legacy_email WHERE customer_email IS NULL;
--- Step 3 (V00007, only after EVERY writer populates customer_email): add the check as
--- NOT VALID — instant, no table scan, but new rows are already enforced
-ALTER TABLE customer_order
-    ADD CONSTRAINT customer_order_customer_email_nn CHECK (customer_email IS NOT NULL) NOT VALID;
--- Step 4 (V00008 — a SEPARATE migration, so the V00007 lock is already released): validate
--- without blocking writes, then SET NOT NULL reuses the validated check and skips the scan
-ALTER TABLE customer_order VALIDATE CONSTRAINT customer_order_customer_email_nn;
-ALTER TABLE customer_order ALTER COLUMN customer_email SET NOT NULL;
--- Step 5 (V00009, after no deployed code reads legacy_email): drop it
-ALTER TABLE customer_order DROP COLUMN legacy_email;
-
--- Safe: add index CONCURRENTLY (no write lock) — TWO rules, both required:
--- 1. Put it ALONE in its own migration file. Flyway detects CONCURRENTLY as
---    non-transactional; mixed with any other statement the migration is rejected:
---    "Detected both transactional and non-transactional statements".
--- 2. Set spring.flyway.postgresql.transactional-lock=false. Flyway's default
---    advisory lock holds an open transaction on a second connection, and
---    CONCURRENTLY waits for every open transaction — including Flyway's own.
---    The migration hangs forever. Session-level locks still block concurrent migrators.
--- V00006__index_customer_order_email.sql (after V00005 adds the column)
-CREATE INDEX CONCURRENTLY customer_order_customer_email_idx ON customer_order (customer_email);
-
--- Dangerous: rename column directly while old code is running (breaks the running app);
---    a direct RENAME is only acceptable when no deployed code uses the column yet
-ALTER TABLE customer_order RENAME COLUMN customer_id TO buyer_id;
-
--- Dangerous: NOT NULL without default on a table with rows
-ALTER TABLE customer_order ADD COLUMN priority integer NOT NULL; -- fails on existing rows
+```
+<app-module>/src/main/resources/db/testdata/
+R__testdata_10_persons.sql
+R__testdata_20_projects.sql
 ```
 
-A new table that no deployed code uses yet may get its indexes in the same migration without
-`CONCURRENTLY` (there is nothing to block). `CONCURRENTLY` is for tables that already carry
-traffic.
-
-## application.yml
-
-```yaml
-spring:
-  flyway:
-    enabled: true
-    locations: classpath:db/migration
-    baseline-on-migrate: false  # reject non-empty schemas without migration history
-    validate-on-migrate: true
-    out-of-order: false         # enforce sequential execution
-    clean-disabled: true        # never drop the schema from the application
-    postgresql:
-      transactional-lock: false # required for CREATE INDEX CONCURRENTLY (see above)
-```
-
-`clean-disabled: true` is the default in Flyway and stays `true` in every shared environment
-(DEV servers, TEST, PROD). `flyway clean` is allowed only against a local throw-away database,
-from the command line, never from application configuration.
+- Separate repeatable scripts, enabled only by
+  `DB_MIGRATION_LOCATIONS=classpath:db/migration,classpath:db/testdata` on LOCAL and DEV branch stacks.
+  Flyway runs repeatables **after** all versioned migrations and re-runs a script when its content
+  changes.
+- **Idempotent**: upsert by natural key (`INSERT … ON CONFLICT (personal_number) DO UPDATE …`), look
+  up foreign keys by natural key in a subselect, never hard-code identity values, never delete rows a
+  user created. Running a script twice yields the same state.
+- A `V` migration that changes a table used by a test-data script updates the script in the same change
+  (the script is re-run and must still apply).
+- **In step with the Keycloak test accounts** (ADR-00004 point 8): every fictitious person carries the
+  personal number of a fictitious test account, from the reserved test range; never a real one. The
+  range itself: open (decided by the architecture owner; to be written in `docs/design/database/`).
+- **CI check**: the configuration templates delivered for TEST and PROD neither enable migrations at
+  start nor list `db/testdata`, and the migration-step image keeps `DB_MIGRATE_TESTDATA=false` by
+  default (never enabled on TEST or PROD).
+- Tests never rely on this data; they create their own (`be-testing-conventions`).
 
 ## CI Checks
 
-Every pull request that touches `db/migration` runs:
+Every pull request that touches `db/migration` or `db/testdata` runs:
 
-1. **Duplicate and format check** — every file matches `V\d{5}__[a-z0-9_]+\.sql` or
-   `R__[a-z0-9_]+\.sql`, and no version number appears twice. Two branches that each add
-   `V00042__` pass review separately and collide after merge; this check catches it.
+1. **Format and duplicates** — every file matches `V\d{5}__[a-z0-9_]+\.sql` or `R__[a-z0-9_]+\.sql`,
+   and no version appears twice. Two branches each adding `V00042__` collide only after merge.
 2. **`flyway validate`** against the migrations of the target branch.
-3. **Migrate an empty database** — all migrations from `V00001` on a fresh PostgreSQL 18
-   (Testcontainers, same major version as production).
-4. **Migrate from the last release** — restore the schema of the last released version
-   (migrate to its last version, or start from its dump), then apply the new migrations.
-   This is the path production takes.
-5. Integration tests run against the migrated PostgreSQL in Testcontainers
-   (see `be-spring-testing-persistence`).
-
-## Onboarding an existing database
-
-Keep automatic baselining disabled in normal application configuration. For a database
-that already has tables but no Flyway history:
-
-1. Back up the database and verify the target URL, database, schema and credentials.
-2. Compare its schema with the migrations and explicitly select the version already present.
-3. Run a one-time `flyway baseline -baselineVersion=<verified-version>` using that target.
-4. Inspect `flyway info`, then migrate only the later versions. Never baseline an unknown
-   or partially migrated schema just to silence a startup error.
-
-This is different from a baseline migration script for new environments. Automatic
-baselining removes Flyway's wrong-database safety check:
-[official baseline-on-migrate documentation](https://documentation.red-gate.com/flyway/reference/configuration/flyway-namespace/flyway-baseline-on-migrate-setting).
-
-## Development Data (dev profile only)
-
-```java
-// Development data via a profile-bound seeder; reference data belongs in V migrations
-@Component
-@Profile("dev")
-public class DevDataSeeder implements ApplicationRunner {
-    private final CustomerRepository customerRepository;
-
-    public DevDataSeeder(CustomerRepository customerRepository) {
-        this.customerRepository = customerRepository;
-    }
-
-    @Override
-    public void run(ApplicationArguments args) {
-        if (customerRepository.count() == 0) {
-            customerRepository.save(Customer.create("dev.customer@example.test"));
-        }
-    }
-}
-```
-
-## Team Workflow: Concurrent Migrations
-
-- Two developers adding migrations at the same time will pick the same next version.
-- Before merging, rebase onto the target branch and renumber your **unmerged** migration to the
-  next free version. A merged or deployed migration is never renumbered.
-- The CI duplicate check (above) is the safety net; `flyway info` locally shows gaps and
-  duplicates before committing.
-- Never set `out-of-order: true` in a shared environment — it masks migration ordering bugs.
+3. **Empty database** — all migrations from `V00001` on PostgreSQL 18 in Testcontainers, as owner,
+   with the runtime role existing (as the admin script creates it); then the test-data scripts twice
+   (idempotence).
+4. **Upgrade from the last release** — migrate to the last released version, then apply the new ones.
+5. Integration tests against the migrated database (`be-spring-testing-persistence`), connected as the
+   runtime role where the test checks rights and the `search_path`.
+6. The TEST/PROD configuration check from "Reference data vs. fictitious data".
 
 ## Gotchas
 
-- Agent names files `V1__…` or `V2.1__…` — versions are five digits: `V00001__`, `V00002__`
-- Agent names files `V00001_create_users.sql` (single underscore) — must be double `__`
-- Agent writes a `U…` undo migration or "reverts" by editing — fix forward with a new `V` migration
-- Agent modifies an existing migration file — never edit a migration that has run
-- Agent uses `uuid`, `serial` or unbounded `bigint` identity for IDs — `bigint GENERATED ALWAYS AS IDENTITY (MAXVALUE 9007199254740991)`
-- Agent uses `CREATE TYPE … AS ENUM` or a free-text status column — lookup table with FK
-- Agent puts lookup values into a dev seeder — reference data belongs in `V` migrations
-- Agent puts sample/test data into a migration — dev seeder or the test itself
-- Agent adds `NOT NULL` column without default — use nullable or provide a default
-- Agent renames columns directly on a live table — expand/contract across deploys
-- Agent mixes `CREATE INDEX CONCURRENTLY` with other statements in one migration — Flyway rejects it ("both transactional and non-transactional statements"); give it its own file
-- Agent ships a `CONCURRENTLY` migration without `spring.flyway.postgresql.transactional-lock=false` — the index build waits on Flyway's own advisory-lock transaction and deploys hang
-- Agent skips indexes — always index foreign keys and columns used in WHERE/ORDER BY
-- Agent puts business logic into triggers or functions — business logic lives in the application `@Service` layer; the database holds structure and declarative constraints
-- Agent creates a migration with `DROP TABLE` or `DROP COLUMN` as first step — add the new structure, deploy code, then drop the old in a later migration
-- Agent adds only `flyway-core` — database support lives in `flyway-database-<db>` modules; without it startup fails with "Unsupported Database"
-- Migrating from Boot 3: `flyway-core` alone used to activate migrations because the auto-configuration lived in `spring-boot-autoconfigure`; Boot 4 moved it to `spring-boot-flyway`, so without `spring-boot-starter-flyway` migrations silently never run
+- Agent names files `V1__…`, `V2.1__…` or with a single `_` — five digits and `__`: `V00001__`
+- Agent writes an undo migration or edits a deployed one — fix forward with a new `V` migration
+- Agent lets the application connect as the schema owner — runtime role in `spring.datasource`, owner only in `spring.flyway.user`
+- Agent leaves the runtime `search_path` at the default — `spring.datasource.hikari.schema`; otherwise "relation does not exist"
+- Agent qualifies its own tables with the schema, or leaves the other application's tables unqualified — own unqualified, foreign qualified
+- Agent enables migrations at start on TEST/PROD or puts the owner password into their app configuration — separate step only
+- Agent creates roles or the database in a migration — the DB admin script does that
+- Agent hard-codes role or schema names in grants — `${runtime_role}`, `${flyway:defaultSchema}`
+- Agent sets `clean-disabled: false` in application configuration — dropping only locally, from the command line
+- Agent puts fictitious persons into a `V` migration or a Java seeder — `db/testdata/R__testdata_*.sql`, LOCAL and DEV branch stacks only
+- Agent writes a test-data script that fails or duplicates on the second run — upsert by natural key
+- Agent uses a real personal number in fictitious data — reserved test range, matching the Keycloak test accounts
+- Agent puts lookup values anywhere but `V` migrations — reference data ships with the schema
+- Agent mixes `CREATE INDEX CONCURRENTLY` with other statements, or omits `transactional-lock: false` — rejected or hangs
+- Agent puts business logic into triggers or functions — business logic lives in the services (ADR-00008 point 3)
+- Agent adds only `flyway-core` — needs `spring-boot-starter-flyway` and `flyway-database-postgresql`
+- Agent uses a Flyway CLI version different from the Boot-managed one in the migration step
 
 ## Provenance
 
-Adapted for the Elysium Java base (JDK 25, Spring Boot 4, PostgreSQL 18, Spring Data JDBC).
+Adapted for this application's Java base (JDK 25, Spring Boot 4, PostgreSQL 18, Spring Data JDBC).
 Source: [rrezartprebreza/spring-boot-skills](https://github.com/rrezartprebreza/spring-boot-skills),
-`skills/spring-boot-4/flyway-migrations`, MIT License, © Rrezart Prebreza.
+`skills/spring-boot-4/flyway-migrations`, MIT License, © Rrezart Prebreza (see `LICENSE.txt`).
 Changes: five-digit versions, no undo, reference data in migrations, `clean-disabled`, CI checks,
-bounded `bigint` IDs and lookup tables in examples.
+bounded `bigint` IDs and lookup tables; migrations per environment (start vs. separate step, owner vs.
+runtime login, `search_path`, grants by placeholder), fictitious data as idempotent repeatable scripts
+on LOCAL and DEV branch stacks only.

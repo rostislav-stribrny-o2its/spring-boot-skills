@@ -1,0 +1,60 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Template: backend/lib-<topic>/pom.xml - a shared library (here lib-db).
+     One entry @Configuration in package app.lib.<topic>; no spring-boot-maven-plugin; no versions.
+     lib-core: no web starter at all (scheduler-service imports it).
+     lib-web: lib-core + spring-boot-starter-webmvc + io.micrometer:micrometer-tracing
+              + org.postgresql:postgresql (constraint names in the problem handler).
+     lib-security: lib-web + spring-boot-starter-security-oauth2-resource-server. -->
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <parent>
+        <groupId>app</groupId>
+        <artifactId>backend</artifactId>
+        <version>0.0.1</version>
+    </parent>
+
+    <artifactId>lib-db</artifactId>
+
+    <dependencies>
+        <!-- Lower library in the stack -->
+        <dependency>
+            <groupId>app</groupId>
+            <artifactId>lib-core</artifactId>
+        </dependency>
+        <!-- What this topic needs; versions from the Boot BOM or the parent -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-data-jdbc</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.projectlombok</groupId>
+            <artifactId>lombok</artifactId>
+            <scope>provided</scope>
+        </dependency>
+
+        <!-- Tests: *Test (Surefire), *IT (Failsafe, Testcontainers) -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-data-jdbc-test</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-testcontainers</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.testcontainers</groupId>
+            <artifactId>testcontainers-postgresql</artifactId> <!-- artifact name per the Testcontainers line managed by Boot -->
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>com.tngtech.archunit</groupId>
+            <artifactId>archunit-junit5</artifactId>
+            <scope>test</scope>
+        </dependency>
+    </dependencies>
+</project>

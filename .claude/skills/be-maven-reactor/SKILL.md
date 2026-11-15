@@ -1,195 +1,277 @@
 ---
 name: be-maven-reactor
 description: >
-  Use when creating or changing the Maven build of a Spring Boot 4 backend: the single reactor
-  with the API model, the generated spec and the runtime modules, the parent POM (JDK 25, Boot
-  BOM, pinned plugins), module dependency rules, annotation processors (MapStruct, optional
-  Lombok), Boot 4 modular starters and what runs in mvn verify.
+  Java/Spring backend: use when creating or changing the Maven build in backend/ - the reactor and
+  parent POM (JDK 25, Spring Boot 4, versions in one place), modules api-model, api-spec, lib-core,
+  lib-db, lib-web, lib-security, backend-service, scheduler-service, what lives in which library,
+  composition via @Import, annotation processors, Boot 4 starters and what ./mvnw verify runs.
 ---
 
 # Maven Reactor
 
-One repository, **one Maven reactor**, one `mvn verify` builds everything in the right order:
-API model → generated spec → runtime modules. A change of the API is one pull request with the
-model, the regenerated spec, the backend implementation and the frontend.
-
-## Structure
+The whole Java backend is **one Maven reactor in `backend/`** with **one parent POM** that holds
+every version (ADR-00002, point 2). One command builds and tests everything in dependency order:
 
 ```
-<java-root>/                     ← parent POM (packaging pom), the reactor root
-├── pom.xml
-├── <module>-api-model/          ← typed API model (Api… classes, endpoint interfaces), no Spring runtime
-├── <module>-api-spec/           ← exports the OpenAPI document (export approach: see api-contract-first, to be confirmed), runs the spec guards
-├── backend/                     ← Spring Boot application: generated controllers, delegates, services, persistence
-├── <shared-lib>/                ← optional: shared types without Spring and without business logic
-└── <second-app>/                ← optional: a second Spring Boot application (e.g. an integration service)
-specs/<app>/openapi/...          ← committed specs written by <module>-api-spec (see api-contract-first)
+./mvnw -B -ntp verify          # CI; locally without -ntp, add -DskipITs to skip integration tests
 ```
 
-- Exactly one `<module>-api-model` + `<module>-api-spec` pair per module that exposes an
-  interface; modules without an interface have none.
-- A shared library holds only contract types (records, enums) that two applications really share;
-  never Spring, never business logic.
-- Moving the API model into its own repository later (published artifact) needs no code change;
-  do it only when a second application consumes it.
+Order inside the reactor: API model -> exported spec -> shared libraries -> applications.
+`specs/` (repository root) is **not** a module (ADR-00006); the build writes into it.
 
-## Dependency rules
+## 1. Layout
+
+```
+backend/                          reactor root: pom.xml (packaging pom), .mvn/, mvnw, lombok.config
+├── pom.xml                       parent POM: versions, pluginManagement, test + coverage setup
+├── openapi-generator.json        the one locked generator configuration (be-api-contract-first)
+├── openapi-templates-customization/JavaSpring/   controlled generator template changes
+├── api-model/                    typed API model: records, enums, endpoint interfaces; no logic
+├── api-spec/                     small Spring Boot app (model + springdoc), started at build to export specs/
+├── lib-core/                     app.lib.core     - no web: mapping config, JSON helpers, Clock
+├── lib-db/                       app.lib.db       - JdbcClient helpers (row mappers, pages)
+├── lib-web/                      app.lib.web      - servlet pieces: correlation filter, global problem handler
+├── lib-security/                 app.lib.security - resource server, roles (imports lib-web)
+├── integration-contract/         plain Java row types + enums of the tables both applications share; no Spring
+├── backend-service/              application: REST API (generated from the spec), business logic, its jobs
+└── scheduler-service/            application: reads source systems on a schedule into schema integration; no public API
+```
+
+- Templates: `templates/parent-pom.xml`, `templates/lib-module-pom.xml`,
+  `templates/app-module-pom.xml`. Copy, then adapt; keep the structure.
+- Add a library only when two applications need the same code, or when a cross-cutting concern
+  deserves one home.
+- A reference feature module `user` lives inside `backend-service` as package `app.backend.user`
+  (a package, not a Maven module). New features follow it.
+
+### What lives where
+
+| Library | Contains | Imported by |
+|---|---|---|
+| `lib-core` | `CentralMapperConfig`, `CommonMappings`, `JsonMappings` (`be-mapstruct-dto-layers`), a `Clock` bean; **no servlet, Spring MVC or Security types** (ArchUnit `libCoreIsWebFree`) | both applications (through the libraries above it) |
+| `lib-db` | `PrefixedRowMapper`, `PageResult`, `PageSpec` (`be-jdbc-client-reads`) | both applications |
+| `lib-web` | `CorrelationIdFilter` (`be-correlation-logging`), `GlobalProblemHandler`, `ProblemException` (`be-problem-details-rfc9457`) | `backend-service` only (via `lib-security`) |
+| `lib-security` | `LibSecurityConfiguration`, converter, `Roles` (`be-oauth2-resource-server`) | `backend-service` only |
+
+`scheduler-service` imports `lib-core` and `lib-db`, never `lib-web` or `lib-security`; it needs
+no Spring MVC.
+
+## 2. Module roles and dependency rules
 
 | Module | May depend on | Must not depend on |
 |---|---|---|
-| `<module>-api-model` | swagger-core annotations, validation API | any runtime module, Spring Boot starters |
-| `<module>-api-spec` | `<module>-api-model` (build-time) | runtime modules |
-| runtime application | its `<module>-api-spec` (scope `provided`, so the reactor builds and checks the spec first), shared libraries | another application module |
-| shared library | JDK, validation API | Spring, runtime modules |
+| `api-model` | `spring-web` (mapping annotations only), `jakarta.validation-api`, `swagger-annotations-jakarta`, Jackson annotations | any Boot starter, `lib-*`, applications |
+| `api-spec` | `api-model`, `spring-boot-starter-webmvc`, springdoc (`…-webmvc-api`) | `lib-*`, applications, database drivers |
+| `lib-core`, `lib-db` | lower `lib-*`, Boot starters without web | `api-model`, `api-spec`, applications, `spring-boot-starter-webmvc` |
+| `lib-web`, `lib-security` | `lib-core`, `lib-web` (for `lib-security`), `spring-boot-starter-webmvc`, the starters they need | `api-model`, `api-spec`, applications |
+| `integration-contract` | JDK only | Spring, `lib-*`, applications (ADR-00001, point 3) |
+| `backend-service` | `lib-*`, `integration-contract`; `api-spec` only as a **build-order** dependency (below) | `api-model` at compile scope, `scheduler-service` |
+| `scheduler-service` | `lib-core`, `lib-db`, `integration-contract` | `lib-web`, `lib-security`, `api-model`, `api-spec`, `backend-service` |
 
-The `provided` dependency on `<module>-api-spec` fixes the build order model → spec → runtime even
-with `-T` or `-pl … -am`, so the spec guards run before code is generated from the spec. No cycles;
-package-level rules are checked by ArchUnit.
+- **No application depends on another application.** Shared code goes to a `lib-*` module.
+- **The backend implements code generated from the committed spec, never the model interfaces**
+  (ADR-00006). So `backend-service` does not see `api-model` classes.
+- **Build order without classpath leakage:** `backend-service` declares `api-spec` with
+  `<scope>provided</scope>` and a wildcard exclusion `*:*`. Maven then builds (and exports) the spec
+  before generating code from it, also with `-pl backend-service -am` and `-T`. ArchUnit forbids
+  any use of `app.api..` and `app.apispec..` from `app.backend..` (`be-archunit-rules`).
+- Libraries are versioned with the reactor (`${project.version}` in the parent's
+  `dependencyManagement`); third-party versions come from the Spring Boot BOM, or are pinned in the
+  parent when Boot does not manage them.
+- `integration-contract` keeps its ADR name; it holds only `...Row` records and enums of the
+  shared tables, has no `@Configuration` and no Spring dependency (details: be-scheduler-service).
 
-## Parent POM
+## 3. Packages
 
-```xml
-<project>
-    <modelVersion>4.0.0</modelVersion>
-    <parent>
-        <groupId>org.springframework.boot</groupId>
-        <artifactId>spring-boot-starter-parent</artifactId>
-        <version>4.x.y</version>   <!-- literal: Maven resolves no ordinary properties here -->
-        <relativePath/>
-    </parent>
+| Code | Package |
+|---|---|
+| API model | `app.api..` |
+| spec export app | `app.apispec..` |
+| shared library | `app.lib.<topic>..` |
+| integration table contract | `app.integration.contract..` |
+| backend application | `app.backend..` (main class `app.backend.BackendServiceApplication`) |
+| scheduler application | `app.scheduler..` (main class `app.scheduler.SchedulerServiceApplication`) |
+| code generated from the spec | `app.backend.api.generated.<area>..` (in `target/`, never committed) |
 
-    <groupId>com.example</groupId>
-    <artifactId>app-parent</artifactId>
-    <version>1.0.0-SNAPSHOT</version>
-    <packaging>pom</packaging>
+**Never put a main class directly in `app`.** `@SpringBootApplication` scans its own package
+downwards; in `app` it would silently pick up every `app.lib.*` bean and the explicit composition
+below would stop meaning anything.
 
-    <modules>
-        <module>core-api-model</module>
-        <module>core-api-spec</module>
-        <module>backend</module>
-    </modules>
+## 4. Shared libraries: one entry configuration, explicit hierarchical `@Import`
 
-    <properties>
-        <java.version>25</java.version>
-        <specs.dir>${maven.multiModuleProjectDirectory}/specs</specs.dir> <!-- adjust to where specs/ sits -->
-        <mapstruct.version>…</mapstruct.version>
-        <openapi-generator.version>…</openapi-generator.version>
-        <archunit.version>…</archunit.version>   <!-- archunit-junit5 is not in the Boot BOM: manage it here -->
-    </properties>
+This is the only home of the composition pattern; other skills refer here. Each `lib-<topic>` has
+exactly **one entry `@Configuration`** in its root package. It scans its own package (the class is
+its own marker), registers its own properties and imports the libraries it builds on:
 
-    <dependencyManagement>
-        <!-- inter-module artifacts with ${project.version}; third-party versions not managed by the Boot BOM -->
-    </dependencyManagement>
+```java
+package app.lib.web;
 
-    <build>
-        <pluginManagement>
-            <!-- every plugin version pinned here: compiler, surefire/failsafe, openapi-generator,
-                 swagger export, enforcer, jacoco; modules only reference them -->
-        </pluginManagement>
-    </build>
-</project>
+@Configuration(proxyBeanMethods = false)
+@ComponentScan(basePackageClasses = LibWebConfiguration.class)
+@Import(LibCoreConfiguration.class)
+public class LibWebConfiguration {
+}
 ```
 
-- The reactor root has a `.mvn/` directory, so `maven.multiModuleProjectDirectory` is the reactor
-  root even when Maven runs from a submodule (`-pl`); the path to `specs/` is defined once as
-  `specs.dir` and every generator and export uses it.
-- `java.version` 25 drives `maven.compiler.release` (via `spring-boot-starter-parent`); never set
-  `source`/`target` separately.
-- Dependency versions come from the Boot BOM; override one only with a written reason.
-- `<dependencies>` in the parent only for test libraries every module needs; everything else in
-  `<dependencyManagement>`.
-- `spring-boot-maven-plugin` only in the runnable application modules, never in the parent.
-- Maven Enforcer: built-in rules `requireJavaVersion` (25), `requireMavenVersion`,
-  `dependencyConvergence` and `bannedDependencies` (JPA, Hibernate, `spring-boot-starter-data-jpa`;
-  per module also the modules it must not depend on). Duplicate classes need the separate
-  `extra-enforcer-rules` artifact (`banDuplicateClasses`).
+```java
+package app.backend;
 
-## Annotation processors
-
-MapStruct is always on. Lombok is an optional recipe of the base; when a project enables it, the
-order is **Lombok → `lombok-mapstruct-binding` → MapStruct**. This configuration belongs in the
-parent's `pluginManagement`:
-
-```xml
-<plugin>
-    <groupId>org.apache.maven.plugins</groupId>
-    <artifactId>maven-compiler-plugin</artifactId>
-    <configuration>
-        <annotationProcessorPaths>
-            <path><groupId>org.projectlombok</groupId><artifactId>lombok</artifactId><version>${lombok.version}</version></path>   <!-- only with Lombok; version from the Boot BOM property -->
-            <path><groupId>org.projectlombok</groupId><artifactId>lombok-mapstruct-binding</artifactId><version>${lombok-mapstruct-binding.version}</version></path> <!-- only with Lombok -->
-            <path><groupId>org.mapstruct</groupId><artifactId>mapstruct-processor</artifactId><version>${mapstruct.version}</version></path>
-        </annotationProcessorPaths>
-        <compilerArgs>
-            <arg>-Amapstruct.defaultComponentModel=spring</arg>
-            <arg>-Amapstruct.unmappedTargetPolicy=ERROR</arg>
-        </compilerArgs>
-    </configuration>
-</plugin>
+@SpringBootApplication                       // scans app.backend.. only
+@ConfigurationPropertiesScan                  // the application's own @ConfigurationProperties records
+@Import({LibDbConfiguration.class, LibSecurityConfiguration.class})   // + lib-web, lib-core through the hierarchy
+public class BackendServiceApplication {
+    public static void main(String[] args) {
+        SpringApplication.run(BackendServiceApplication.class, args);
+    }
+}
 ```
 
-`typeConversionPolicy` is not a processor option: it is set in the shared `@MapperConfig` that
-every mapper uses (see `be-backend-layers`).
+`SchedulerServiceApplication` imports `LibDbConfiguration` (and through it `LibCoreConfiguration`).
 
-## What `mvn verify` runs
+- Importing an upper library brings the lower ones with it; importing one twice is harmless.
+- **Properties:** one prefix `app.` for every property of our own: libraries `app.<topic>.*`,
+  registered from the entry configuration with `@EnableConfigurationProperties`; applications
+  `app.<area>.*`, found by `@ConfigurationPropertiesScan` on the main class. Environment variables
+  are the upper-case form (`APP_…`; the security and database variables keep their documented
+  names, e.g. `OPERETA_OIDC_*`, `DB_*`).
+- A bean that an application may replace is declared with `@ConditionalOnMissingBean`; prefer this
+  over profiles.
+- **No library auto-configuration** (`META-INF/spring/…AutoConfiguration.imports`): the libraries
+  live in this repository and are composed explicitly. Spring Boot's own auto-configuration stays on.
 
-1. API model: compile + ArchUnit rules over the model.
-2. Spec module: export the spec, lint it (G1), compare with the committed file (G5),
-   `oasdiff breaking` against the last release (G4).
-3. Runtime modules: generate from the spec, compile (G2), unit tests, ArchUnit rules over the
-   runtime code, integration tests with PostgreSQL in Testcontainers (Failsafe), Flyway checks.
-4. Coverage report and SAST (Sonar) in CI.
+## 5. Applications: the module decides the role
 
-## Boot 4 modular starters
+- `backend-service` and `scheduler-service` are separate runnable modules, each with its own
+  `spring-boot-maven-plugin` and container image. **What an application does is decided by its
+  module, not by a Spring profile or a property** (ADR-00002, point 2).
+- Spring profiles exist **only for environment behaviour**. A profile or property that switches a
+  role on or off is a finding.
+- Scheduled jobs use `@Scheduled` with a ShedLock lock in PostgreSQL, in a pool separate from REST
+  handling (ADR-00002, point 4; `be-scheduling-shedlock`).
 
-- One starter per technology and module; renamed starters: `spring-boot-starter-web` →
-  `spring-boot-starter-webmvc`, OAuth2 starters with the `security-` prefix
-  (`spring-boot-starter-security-oauth2-resource-server`), `spring-boot-starter-aop` →
-  `spring-boot-starter-aspectj`.
-- Persistence: `spring-boot-starter-data-jdbc` (Spring Data JDBC + `JdbcClient`), never
-  `spring-boot-starter-data-jpa`.
-- Flyway does not arrive transitively: `spring-boot-starter-flyway` + `flyway-database-postgresql`
-  in the module that owns the migrations.
-- Test starters follow `spring-boot-starter-<technology>-test` and are self-contained.
-- `spring-boot-starter-classic` / `-test-classic` are transitional only — not in new modules.
-- Optional dependencies are excluded from the repackaged jar unless `includeOptional` is set
-  (upstream note; verify against the Boot 4 migration guide when it matters).
+## 6. Parent POM - rules
 
-## Opereta
+See `templates/parent-pom.xml` (complete skeleton).
 
-- **Modules** (decided by R. Stříbrný, OQ-014 J1): `api-model`, `api-spec`, `backend`, `integration-contract`,
-  `integration-service` — one reactor with a common parent POM.
-  - `backend` — the Spring Boot application with all business logic;
-  - `integration-contract` — shared library: only the contract types of the integration (`…Row`
-    records of the transport and control tables, enums), no Spring, no business logic;
-  - `integration-service` — a second Spring Boot application (MS SQL and PostgreSQL drivers,
-    ShedLock, configuration from the environment), no public route.
-- **Interfaces:** only `backend` has an interface, and it is `public`; its module code in the spec
-  path is `be`: `specs/opereta/openapi/public/be/be-service-public.json`. `integration-service`
-  exposes no API. `integration-service` has its own test suite and shared context.
-- **Lombok is enabled** in Opereta (processor order Lombok → `lombok-mapstruct-binding` → MapStruct).
-- Where the reactor root sits in the repository follows the Opereta template of Elysium
-  (Java backend in `backend/`); confirm the exact layout against the template in `main` before
-  creating modules.
+- Parent is `spring-boot-starter-parent` with a **literal** version (template: `4.1.2`; properties
+  are not resolved there). Minor Boot upgrades need no ADR; a new major Java or Boot version does.
+- `<java.version>25</java.version>` only; it drives `maven.compiler.release`. Never set
+  `source`/`target`. Java versions: LTS only.
+- Every version not managed by the Boot BOM is a property in the parent. Literal versions in the
+  template are those of the repository's existing `backend/pom.xml`. **`PIN_IN_PARENT_POM`** marks a
+  version nobody has pinned yet: look up the latest release on Maven Central whose release notes
+  state support for JDK 25 / Spring Boot 4, write it as a literal and never leave a range.
+  Modules never carry versions.
+- `<dependencyManagement>` for everything; `<dependencies>` in the parent only for what truly every
+  module needs (normally nothing).
+- `spring-boot-maven-plugin` only in `backend-service`, `scheduler-service` and `api-spec` (which
+  only starts and stops it at build; its `repackage` is switched off), never in the parent's
+  `<plugins>`.
+- `repo.root` = `${maven.multiModuleProjectDirectory}/..` - `backend/.mvn/` makes
+  `maven.multiModuleProjectDirectory` the reactor root even with `-pl`; every path to `specs/` is
+  built from `repo.root`.
+- Maven Enforcer (Boot manages its version): `requireJavaVersion [25,26)`,
+  `requireMavenVersion`, `bannedDependencies` for JPA/Hibernate, message-broker clients and Redis
+  clients (ADR-00001 point 5, ADR-00002).
+- Formatting check: Spotless with `palantirJavaFormat` and `removeUnusedImports`, `check` bound to
+  the build, in the parent's `<plugins>` (block in the template; `spotless.version` as in the
+  existing `backend/pom.xml`).
+
+## 7. Annotation processors and Lombok
+
+This section is the one source of the processor setup; `be-lombok` and `be-mapstruct-dto-layers`
+refer here. Order **Lombok -> `lombok-mapstruct-binding` -> MapStruct**, in the parent's
+`pluginManagement` of `maven-compiler-plugin` (JDK 23+ runs no processor found implicitly):
+
+```xml
+<annotationProcessorPaths>
+    <path><groupId>org.projectlombok</groupId><artifactId>lombok</artifactId><version>${lombok.version}</version></path>
+    <path><groupId>org.projectlombok</groupId><artifactId>lombok-mapstruct-binding</artifactId><version>${lombok-mapstruct-binding.version}</version></path>
+    <path><groupId>org.mapstruct</groupId><artifactId>mapstruct-processor</artifactId><version>${mapstruct.version}</version></path>
+</annotationProcessorPaths>
+```
+
+- No `-Amapstruct.*` compiler arguments: the MapStruct policies live only in `CentralMapperConfig`
+  (`be-mapstruct-dto-layers`), which every mapper must use (ArchUnit).
+- `lombok.version` comes from the Boot BOM. `lombok` is a `provided` dependency in the modules that
+  use it (not in `api-model`: data carriers there are `record`s); `mapstruct` (annotations) is a
+  normal compile dependency in the modules with mappers.
+- `backend-service` needs Lombok also because the generated DTOs carry Lombok constructors (the
+  one exception in generated code, `be-api-contract-first`).
+
+## 8. Tests in the build
+
+| Kind | Name | Plugin / phase | Runs |
+|---|---|---|---|
+| unit tests and slices with mocks (`@WebMvcTest`, …): no shared full context, no Docker | `*Test` | Surefire, `test` | always |
+| shared Spring context (`@SpringBootTest` base class) and/or Testcontainers | `*IT` | Failsafe, `integration-test` + `verify` | `verify`, unless `-DskipITs` |
+
+- `./mvnw -B -ntp verify` (CI) runs both. `-DskipITs` skips only the integration tests - the spec
+  export in `api-spec` still runs.
+- Surefire includes only `**/*Test.java`, Failsafe only `**/*IT.java` (explicit, not the plugin
+  defaults). Failsafe's `excludedGroups` comes from the property `it.excludedGroups` (empty by
+  default, so CI runs everything); locally `-Dit.excludedGroups=keycloak` skips the Keycloak IT.
+- JaCoCo: `prepare-agent` writes `surefireArgLine`, `prepare-agent-integration` writes
+  `failsafeArgLine` (separate properties, so each plugin gets one agent); `merge` after the
+  integration tests and `report` in `verify` produce one report per module
+  (`backend/<module>/target/site/jacoco/jacoco.xml`) for Sonar.
+- Testcontainers needs Docker on the CI runner; without it, ITs fail - they do not silently skip.
+- Test starters: `spring-boot-starter-<technology>-test` (Boot 4); they are self-contained.
+
+## 9. What `./mvnw -B -ntp verify` does, in order
+
+`api-model` (compile, ArchUnit over the model) → `api-spec` (start, export `specs/…`, stop) →
+`lib-*`, `integration-contract` → `backend-service` (generate from the just re-exported spec,
+compile, tests, ArchUnit, ITs) → `scheduler-service` → JaCoCo reports; CI then checks
+`git diff --exit-code -- specs/` and runs the spec guards.
+
+### 3-Stage Local Incremental Verification (`RULE-008`, `AGENT_BEHAVIOUR-058`)
+
+Never re-run the entire 9-module reactor from scratch on every compile or test fix. Use three stages locally:
+
+| Stage & Changed Area | Command (from `backend/`) | Purpose |
+| :--- | :--- | :--- |
+| **1. Inner loop — single `*Test` / slice / ArchUnit** | `./mvnw -B test -pl :<module> -am -Dtest=<ClassTest>` | Runs only the touched unit/slice test in seconds. |
+| **1. Inner loop — single `*IT` integration test** | `./mvnw -B verify -pl :<service> -am -Dtest=none -Dit.test=<ClassIT>` | Skips Surefire and runs only the target Failsafe `*IT`. |
+| **1. Inner loop — fast compile / Lombok / MapStruct** | `./mvnw -B -T 1C -DskipTests -Dspotless.check.skip=true test-compile` | Compiles all main, generated, and test sources in parallel. |
+| **1. Inner loop — resume failed reactor** | `./mvnw -B verify -rf :<failed-module>` | Resumes from the failed module without repeating upstream modules. |
+| **2. Per-item check — shared library (`lib-*`)** | `./mvnw -B -Psast test -pl :<lib-module> -amd -DskipITs` | Unit-tests the library and every downstream module depending on it (`-amd`). |
+| **2. Per-item check — API contract (`api-model` / `api-spec`)** | `./mvnw -B -Psast verify -pl :api-model,:api-spec,:backend-service -am` (then `backend/scripts/api-guards.sh` from repo root) | Exports `specs/` on a dynamic ephemeral port and verifies generated delegates compile and pass tests. |
+| **2. Per-item check — `layers.xml` / packaging** | See `/be-spring-boot-layers` | Verifies 6-layer JAR packaging and `dependencies-base` parity. |
+| **3. Final gate (once after all items)** | `./mvnw -q spotless:apply && ./mvnw -B -Psast -Psca verify` (+ `backend/scripts/api-guards.sh` when model changed) | Full reactor gate (`AGENT_BEHAVIOUR-048`, `AGENT_BEHAVIOUR-058`). `-T 1C` is for `test-compile` / `package -DskipTests`, never for full `verify` with Failsafe `*IT`. |
+
+## 10. Spring Boot 4 starters
+
+Which starter or artifact goes into which module (web, security, JDBC, Flyway, actuator, tracing,
+drivers, ShedLock, Testcontainers): [starters.md](starters.md). In short: `-webmvc` not `-web`,
+`-aspectj` not `-aop`, `-data-jdbc` never `-data-jpa`, Flyway needs its starter.
+
+- Jackson 3 (`tools.jackson.*`) is the JSON stack; do not add Jackson 2 artifacts. The one
+  exception is `api-spec`, where swagger-core brings Jackson 2 (`be-api-contract-first`).
+- Not yet verified by a build in this repository: the `provided` + `*:*` exclusion on `api-spec`,
+  the JaCoCo setup with Boot 4.1 and JDK 25.
 
 ## Gotchas
-- Agent creates separate builds or repositories for the API model — one reactor, one `mvn verify`
-- Agent adds a hexagonal split (`domain`/`application`/`infrastructure` modules) — layers are packages inside the application module
-- Agent puts Spring or business logic into a shared library — contract types only
-- Agent sets `<java.version>21</java.version>` or `source`/`target` — JDK 25 via `java.version`
-- Agent adds `spring-boot-starter-data-jpa` or Hibernate — Spring Data JDBC only
-- Agent configures Lombok and MapStruct without `lombok-mapstruct-binding` — mappers then depend on processor order
-- Agent puts `spring-boot-maven-plugin` in the parent POM — only in runnable modules
-- Agent adds `<dependencies>` in the parent instead of `<dependencyManagement>` — every module gets them
-- Agent leaves plugin versions unpinned — pin them in `pluginManagement`
-- Agent overrides Boot-managed versions without a reason — prefer the BOM
-- Agent adds `spring-boot-starter-test` next to a `…-test` starter — Boot 4 test starters are self-contained
-- Agent adds bare `flyway-core` — use `spring-boot-starter-flyway`
+
+- Agent puts the main class in package `app` - it then scans every library; use `app.backend` / `app.scheduler`
+- Agent selects the application role with a Spring profile or property - the role is the module
+- Agent makes `backend-service` depend on `api-model` - the backend implements generated code only
+- Agent makes one application depend on another - move shared code to `lib-*`
+- Agent puts a servlet filter or `@RestControllerAdvice` into `lib-core` - `lib-web`; `scheduler-service` has no web layer
+- Agent imports `lib-web` or `lib-security` into `scheduler-service` - it imports `lib-core` and `lib-db` only
+- Agent registers a library through auto-configuration or a wide `@ComponentScan("app")` - one entry `@Configuration`, explicit `@Import`
+- Agent sets `source`/`target` or `java.version` 21 - JDK 25 via `java.version`
+- Agent adds a version in a module POM, leaves a plugin unpinned or keeps `PIN_IN_PARENT_POM` - literal versions in the parent only
+- Agent puts `spring-boot-maven-plugin` into the parent's `<plugins>` - only runnable modules
+- Agent adds `spring-boot-starter-data-jpa`, Hibernate, a broker or Redis client - banned by the enforcer
+- Agent configures Lombok + MapStruct without `lombok-mapstruct-binding` - mappers depend on processor order
+- Agent adds only `flyway-core` - migrations never run; `spring-boot-starter-flyway` + `flyway-database-postgresql`
+- Agent names an integration test `*Test` or a unit test `*IT` - the split decides where and when it runs
+- Agent disables tests to make the build pass (`-DskipTests` in CI) - fix the cause
 
 ## Provenance
 
-Rewritten for the Elysium Java base (JDK 25, Spring Boot 4, one reactor: API model → spec → runtime modules).
-Source: [rrezartprebreza/spring-boot-skills](https://github.com/rrezartprebreza/spring-boot-skills),
-`skills/spring-boot-4/multi-module-maven` (parent POM conventions, processor order, Boot 4 modular starters), MIT License,
-© Rrezart Prebreza. The original is kept in `_unused/skills/spring-boot-4/multi-module-maven`.
-Opereta layer: section "Opereta".
+Rewritten for this application's Java base (JDK 25, Spring Boot 4, one reactor). Parent-POM
+conventions and processor order derive from
+[rrezartprebreza/spring-boot-skills](https://github.com/rrezartprebreza/spring-boot-skills),
+`skills/spring-boot-4/multi-module-maven`, MIT License, (c) Rrezart Prebreza.

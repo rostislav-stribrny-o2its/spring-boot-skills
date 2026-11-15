@@ -1,316 +1,239 @@
 ---
 name: be-oauth2-resource-server
 description: >
-  Use when configuring Spring Boot as an OAuth2 resource server, validating JWTs from
-  an external identity provider (Keycloak, Entra ID, Auth0, Okta), extracting claims,
-  mapping authorities from the token or from the application database, configuring
-  issuer/audience/CORS from the environment, or implementing method-level authorization.
+  Java/Spring backend: use when securing the API with Keycloak as a stateless OAuth2 resource
+  server — JWT validation (issuer, JWKS, RS256, audience, azp, clock skew), Keycloak roles and
+  application roles to authorities, @PreAuthorize with role constants, the /api/users/me status
+  endpoint, CORS/CSRF for a bearer API, or the lib-security module.
 ---
 
-# OAuth2 Resource Server
+# OAuth2 resource server with Keycloak
 
-Spring Boot 4.x ships **Spring Security 7** — lambda DSL only; `and()`, `authorizeRequests()`,
-`antMatchers()`, and `AntPathRequestMatcher`/`MvcRequestMatcher` are gone
-(`requestMatchers("/path/**")` is backed by `PathPatternRequestMatcher`).
+Not yet verified by a build in this repository. All Keycloak runtime behaviour below (claims,
+issuer, keys) is unverified until the realm changes in "Changes this needs outside the code"
+are made and the Keycloak IT of `be-spring-testing-security` passes.
 
-Principles for the Elysium Java base:
-- The backend is a **stateless resource server**. It never issues tokens, never shows a login
-  form and never stores passwords — the identity provider does that.
-- The backend is **independent of the token issuer**: issuer, JWK set, audience and the claim
-  that identifies the person come from configuration (environment variables), never from
-  constants in code. Switching Keycloak for another OIDC provider is a configuration change.
-- **One place** turns a token into authorities: a single converter bean. Claim normalization
-  (nested Keycloak roles, `scope` vs `scp`) happens there and nowhere else.
+## Principles
 
-## Dependency
+- The backend is a **stateless resource server**: it never issues tokens, shows no login form,
+  stores no password, keeps no session. Keycloak authenticates; the backend verifies the bearer
+  token itself (signature from Keycloak's keys, issuer, validity, audience and the client the token
+  was issued to — per ADR-00004 point 2).
+- **RS256 only.** The realm signs access tokens with RS256; the backend fetches the public keys
+  (JWKS) and needs no shared secret. HS256 tokens are rejected.
+- **One converter** turns a verified token into authorities; **one class** (`Roles`) names them.
+- Everything that differs per environment comes from environment variables (ADR-00003 point 7).
+- Lives in **`lib-security`** (package `app.lib.security`) with ONE entry configuration
+  `LibSecurityConfiguration`, which imports `lib-web` (global problem handler, correlation filter);
+  only `backend-service` composes it, by explicit `@Import` (`be-maven-reactor`). No
+  auto-configuration of our own.
+
+## Dependency (lib-security)
 
 ```xml
 <dependency>
     <groupId>org.springframework.boot</groupId>
+    <!-- Boot 4 name; the Boot 3 name spring-boot-starter-oauth2-resource-server is deprecated -->
     <artifactId>spring-boot-starter-security-oauth2-resource-server</artifactId>
 </dependency>
 ```
 
-## Security Configuration
+## Templates
 
-```java
-@Configuration
-@EnableWebSecurity
-@EnableMethodSecurity
-public class ResourceServerConfig {
+| File | What |
+|---|---|
+| `templates/LibSecurityConfiguration.java` | entry `@Configuration`: filter chain, converter, `azp` validator, access-denied handler |
+| `templates/KeycloakJwtAuthenticationConverter.java` | token → principal + authorities (Keycloak roles + application roles) |
+| `templates/AppAuthentication.java` | the authentication object services read (principal, person id, no-access reason) |
+| `templates/ApplicationAccess.java` | port implemented by `backend-service` against its database |
+| `templates/NoAccessException.java` | a `ProblemException` of `lib-web`: `403` `/problems/no-access` with `reason` |
+| `templates/Roles.java` | authority names and `@PreAuthorize` expressions |
+| `templates/AppSecurityProperties.java` | `app.security.*` (incl. `me-path`) |
+| `templates/UsersApiDelegateImpl.java` | `GET /api/users/me` sketch: the API delegate in `backend-service` |
+| `templates/application-security.yaml` | configuration fragment |
 
-    @Bean
-    public SecurityFilterChain filterChain(HttpSecurity http,
-                                           Converter<Jwt, AbstractAuthenticationToken> jwtAuthConverter,
-                                           CorsConfigurationSource corsConfigurationSource)
-            throws Exception {
-        return http
-            .csrf(AbstractHttpConfigurer::disable)   // stateless API with bearer tokens, no cookies
-            .cors(cors -> cors.configurationSource(corsConfigurationSource)) // no-op while no origins are configured
-            .sessionManagement(s -> s.sessionCreationPolicy(STATELESS))
-            .authorizeHttpRequests(auth -> auth
-                .requestMatchers("/actuator/health/**").permitAll()
-                .requestMatchers("/api/admin/**").hasRole("ADMIN")
-                .anyRequest().authenticated()
-            )
-            .oauth2ResourceServer(oauth2 -> oauth2
-                .jwt(jwt -> jwt.jwtAuthenticationConverter(jwtAuthConverter))
-            )
-            .build();
-    }
-}
-```
-
-## Where authorities come from — pick one model
-
-| Model | Authorities | When |
-|---|---|---|
-| **Token roles** | scopes (`SCOPE_*`) and/or IdP roles (`ROLE_*`) from claims | the IdP is the master of who may do what |
-| **Application roles** | token proves identity (and at most an entry role); business roles are loaded from the application database | the application manages roles itself (role administration in the app, roles derived from business data) |
-
-Exactly one `Converter<Jwt, AbstractAuthenticationToken>` bean exists; the two snippets below are alternatives — choosing a model means replacing that one bean.
-
-Do not mix both models for the same decision. If business roles live in the database, a role
-claim in the token must not grant them as well.
-
-### Token roles (Keycloak realm roles + scopes)
-
-```java
-@Bean
-public Converter<Jwt, AbstractAuthenticationToken> jwtAuthConverter(SecurityProps props) {
-    // Keep the defaults: the "scope" OR "scp" claim (Okta/Entra use scp) -> SCOPE_*.
-    // Calling setAuthoritiesClaimName(...) replaces them — then hasAuthority("SCOPE_admin")
-    // can never pass. Extend the defaults with Keycloak realm roles instead.
-    var scopes = new JwtGrantedAuthoritiesConverter();
-    var converter = new JwtAuthenticationConverter();
-    converter.setPrincipalClaimName(props.principalClaim());   // e.g. "sub", from configuration
-    converter.setJwtGrantedAuthoritiesConverter(jwt -> {
-        Collection<GrantedAuthority> authorities = new ArrayList<>(scopes.convert(jwt));
-        // Keycloak nests realm roles under realm_access.roles -> ROLE_* (for hasRole)
-        Map<String, Object> realmAccess = jwt.getClaimAsMap("realm_access");
-        if (realmAccess != null && realmAccess.get("roles") instanceof Collection<?> roles) {
-            roles.forEach(role -> authorities.add(new SimpleGrantedAuthority("ROLE_" + role)));
-        }
-        return authorities;
-    });
-    return converter;
-}
-```
-
-### Application roles (loaded from the database)
-
-```java
-@Bean
-public Converter<Jwt, AbstractAuthenticationToken> jwtAuthConverter(SecurityProps props,
-                                                                     UserRoleService userRoles) {
-    return jwt -> {
-        String personKey = jwt.getClaimAsString(props.principalClaim());
-        // Roles come from the application database; the token only identifies the person.
-        // The lookup is cached briefly (seconds to minutes) so revocations take effect quickly.
-        Collection<GrantedAuthority> authorities = userRoles.findRoles(personKey).stream()
-            .map(role -> (GrantedAuthority) new SimpleGrantedAuthority("ROLE_" + role))
-            .toList();
-        return new JwtAuthenticationToken(jwt, authorities, personKey);
-    };
-}
-```
-
-A person with a valid token but no record in the application gets no business authority;
-every endpoint requires a concrete role, so "authenticated" alone opens nothing except an
-explicit status endpoint.
-
-## Opereta: application roles, personal number, paired accounts
-
-Opereta uses the **application-roles model** with Keycloak (other OIDC issuers only by configuration):
-
-- **Principal** = claim `personal_number` (`app.security.principal-claim: personal_number`). It comes only from a trusted source and is matched against the HR master data; the link between the identity-provider account and the personal number never changes silently.
-- **Token claims:** `aud` = `opereta-api`, `azp` = `opereta-spa`, `personal_number`, client entry role `opereta-user` (granted by the single entry group in AD). The entry role proves only "may enter", never a business permission. No personal data (name, e-mail) in the access token — the frontend reads nothing from the token and gets everything from `/api/me`.
-- **Business roles** come from the application database. `UserRoleService.findPairedRoles(personalNumber)` returns `Optional<Set<String>>`: empty = the person is not paired with a record of the application.
-- **One converter** builds the authorities: `ROLE_OPERETA_USER` from the entry role; if paired, `ROLE_PAIRED` plus the business roles from the database. Short cache (a ban recorded in the database must take effect quickly; access tokens are short-lived).
-- **One endpoint `/api/me`** (decided 9. 11. 2026; there is no separate status endpoint): the entry role is enough to call it, and the backend decides from the Opereta database:
-  - `200` with the identity (`user.id` as `int64`, `personalNumber` as a separate field, `roles` with `code`/`name`/`source`, display-only `permissions`);
-  - `403` `application/problem+json` with `type` `/problems/no-access` and `reason` `UNPAIRED` · `NO_ROLE` · `SUSPENDED`.
-- **Suspension on any other call:** when the backend finds the person suspended (e.g. a ban after the end of employment, checked in the database on every request) it also returns `403` `/problems/no-access` with `reason: SUSPENDED`, not a generic access-denied problem, so the frontend can switch to the "no access" screen mid-session.
-- **Authorization:** `ROLE_OPERETA_USER` reaches only `/api/me`; every other endpoint requires `ROLE_PAIRED` **and** a concrete business role via `@PreAuthorize`. `permissions` in `/api/me` are for display only — the backend authorizes every endpoint itself.
-- **Invalid or expired token:** `401` with `WWW-Authenticate: Bearer error="invalid_token"` and an empty body (Spring Security default).
-- **Role administration rules** (enforced in the service, tested): nobody changes their own roles; an administrator does not change another administrator's roles; every role change is audited.
-- **Environment variables** (never constants): `OPERETA_OIDC_ISSUER_URI`, `OPERETA_OIDC_JWKS_URI`, `OPERETA_OIDC_AUDIENCE`, `OPERETA_OIDC_CLIENT_ID`, mapped to the Spring properties shown below.
-- **Same origin:** one hostname per environment, the proxy routes `/auth` → Keycloak, `/api` → backend, `/` → frontend; CORS stays disabled.
-- **Local profile without SSO** (development and tests only) is never part of a TEST/PROD image; the application refuses to start with it outside local, and CI checks it.
-
-```java
-@Bean
-public Converter<Jwt, AbstractAuthenticationToken> jwtAuthConverter(SecurityProps props,
-                                                                     UserRoleService userRoles) {
-    return jwt -> {
-        String personalNumber = jwt.getClaimAsString(props.principalClaim());   // "personal_number"
-        if (personalNumber == null || personalNumber.isBlank()) {
-            throw new BadCredentialsException("Missing principal claim");
-        }
-        List<GrantedAuthority> authorities = new ArrayList<>();
-        if (!hasEntryRole(jwt, props)) {                                         // client role + azp check
-            return new JwtAuthenticationToken(jwt, authorities, personalNumber); // no entry role: nothing
-        }
-        authorities.add(new SimpleGrantedAuthority("ROLE_OPERETA_USER"));
-        userRoles.findPairedRoles(personalNumber).ifPresent(roles -> {           // cached briefly
-            authorities.add(new SimpleGrantedAuthority("ROLE_PAIRED"));
-            roles.forEach(r -> authorities.add(new SimpleGrantedAuthority("ROLE_" + r)));
-        });
-        return new JwtAuthenticationToken(jwt, authorities, personalNumber);
-    };
-}
-```
-
-## application.yml — values from the environment
+## Token validation
 
 ```yaml
-spring:
-  security:
-    oauth2:
-      resourceserver:
-        jwt:
-          issuer-uri: ${OPERETA_OIDC_ISSUER_URI}   # https://<env-host>/auth/realms/opereta
-          jwk-set-uri: ${OPERETA_OIDC_JWKS_URI}    # optional; avoids discovery at startup
-          audiences: ${OPERETA_OIDC_AUDIENCE}      # without it, tokens minted for ANY client are accepted
-
-app:
-  security:
-    principal-claim: personal_number
-    cors:
-      allowed-origins: ${CORS_ALLOWED_ORIGINS:}   # empty = CORS disabled (same-origin deployment)
+spring.security.oauth2.resourceserver.jwt:
+  issuer-uri: ${OPERETA_OIDC_ISSUER_URI}   # https://<app origin>/auth/realms/<realm>
+  jwk-set-uri: ${OPERETA_OIDC_JWKS_URI}    # http://keycloak:8080/auth/realms/<realm>/protocol/openid-connect/certs
+  jws-algorithms: RS256
+  audiences: ${OPERETA_OIDC_AUDIENCE}      # the API audience, e.g. opereta-api
 ```
 
-Bind `app.security.*` with a validated `@ConfigurationProperties` record (see the
-`be-configuration-properties` skill). Secrets and per-environment URLs never appear in code
-or in committed profile files.
+**Issuer vs. JWKS URI.** Keycloak is served behind the frontend origin under `/auth`
+(`KC_HTTP_RELATIVE_PATH=/auth`, `KC_HOSTNAME=https://<app origin>/auth`), so the `iss` claim is
+`https://<app origin>/auth/realms/<realm>` — the address the **browser** used. Inside Docker Compose
+(or K3s, should it ever be introduced — ADR-00003 point 1) the backend often cannot reach that public
+address (TLS ends at the gateway, DNS, hairpin routing). Therefore:
 
-## CORS
+- `issuer-uri` = the public issuer, compared **byte for byte** with `iss` (scheme, host, port, `/auth`,
+  no trailing slash);
+- `jwk-set-uri` = where the backend fetches keys, typically the internal service address
+  (`http://keycloak:8080/auth/realms/<realm>/protocol/openid-connect/certs`).
 
-- **Preferred: same origin.** When a reverse proxy serves the SPA (`/`), the API (`/api`) and the
-  identity provider (`/auth`) under one hostname, the browser never makes a cross-origin call
-  and CORS stays **disabled**. Do not add a CORS configuration "just in case".
-- **Only when the frontend really runs on another origin** (e.g. a local Vite dev server
-  without a proxy), allow exactly the configured origins:
+With both set, Spring Boot builds the decoder from `jwk-set-uri`, validates `iss` against `issuer-uri`
+and does **no discovery call at startup**; keys are fetched on the first request, cached, and re-fetched
+when an unknown `kid` arrives (key rotation needs no restart). With `issuer-uri` alone, Boot discovers
+`<issuer>/.well-known/openid-configuration` from inside the container — this fails exactly where the
+public address is unreachable.
+
+**Audience and authorized party** (per ADR-00004 point 2):
+
+- `audiences` → `aud` must contain the API audience. Without it, any token the realm minted for any
+  client is accepted. Keycloak adds the API to `aud` only with an audience mapper (see below).
+- `azp` must equal the frontend client id. Boot adds every `OAuth2TokenValidator<Jwt>` bean to the
+  auto-configured decoder; `LibSecurityConfiguration` declares one for `azp`. If a build shows the bean
+  is not picked up, declare the `JwtDecoder` yourself (`NimbusJwtDecoder.withJwkSetUri(...)
+  .jwsAlgorithm(SignatureAlgorithm.RS256).build()` + `setJwtValidator(new
+  DelegatingOAuth2TokenValidator<>(new JwtTimestampValidator(), new JwtIssuerValidator(issuer),
+  audience, azp))`) — then the `audiences`/`jws-algorithms` properties are no longer used.
+
+**Clock skew.** `exp`/`nbf` are checked with Spring's default tolerance of 60 s. Keep it: access tokens
+live 5 minutes (ADR-00004 point 7), and clocks are synchronised by infrastructure (ADR-00003 point 10).
+Do not raise the tolerance to hide clock drift — fix the clock. A different tolerance needs the own
+`JwtDecoder` above with `new JwtTimestampValidator(Duration.ofSeconds(n))`.
+
+**Errors.** Missing, invalid, expired token or a failed validator → `401` with
+`WWW-Authenticate: Bearer error="invalid_token"` and an empty body (Spring default; the frontend
+expects exactly this).
+
+## Authorities
+
+Keycloak puts realm roles in `realm_access.roles` and client roles in
+`resource_access.<client-id>.roles`. The converter reads both (client roles only for
+`app.security.role-client-id`) and normalises names (`opereta-user` → `OPERETA_USER`).
+
+Opereta uses the **application-roles model** (per ADR-00004 points 4–6):
+
+| Authority | Granted when | Reaches |
+|---|---|---|
+| `ROLE_ENTRY` | the token carries the configured entry role (`app.security.entry-role`) | `/api/users/me` only |
+| `ROLE_ACTIVE` | entry role **and** the database says: paired, not suspended, at least one role | `/api/**` (URL rule) |
+| `ROLE_<CODE>` | each business role from the application database, only when `ACTIVE` | operations via `@PreAuthorize` |
+
+- Other roles in the token are **ignored**: business roles live in the application database, never in
+  the token (per ADR-00004 point 4: user roles are kept by Opereta, not by AD). Never grant the same
+  decision from both sources.
+- **Principal** = claim `personal_number` (`app.security.principal-claim`); per ADR-00004 point 5 the
+  personal number identifies the person — not e-mail, username or login. A token without it → `401`.
+  `sub` (the technical account id) is passed on only for audit.
+- **Every request** asks `ApplicationAccess` (one indexed query: person, suspension, role codes):
+  per ADR-00004 point 6 a ban takes effect once it is written to the database, plus an optional cache
+  of at most 5 minutes. Start without a cache; add one (Spring Cache, `expireAfterWrite` ≤ 5 min) only
+  when measurement shows the load matters.
+- **Token-roles variant** (an application without its own role data): map every token role to
+  `ROLE_<NAME>` instead of calling `ApplicationAccess`. Not used in Opereta.
+
+## Method security and role constants
 
 ```java
-@Bean
-public CorsConfigurationSource corsConfigurationSource(SecurityProps props) {
-    var source = new UrlBasedCorsConfigurationSource();
-    if (props.cors().allowedOrigins().isEmpty()) {
-        return source;                                   // nothing registered = no CORS
-    }
-    var config = new CorsConfiguration();
-    config.setAllowedOrigins(props.cors().allowedOrigins());   // exact origins, never "*"
-    config.setAllowedMethods(List.of("GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"));
-    config.setAllowedHeaders(List.of("Authorization", "Content-Type"));
-    config.setMaxAge(3600L);
-    source.registerCorsConfiguration("/api/**", config);
-    return source;
-}
+@Override
+@PreAuthorize(Roles.HAS_PROJECT_MANAGER)        // compile-time constant, defined once in Roles
+public ResponseEntity<ProjectDto> updateProject(Long id, UpdateProjectDto body) { … }
 ```
 
-## Custom Claim Extraction
+- `@EnableMethodSecurity` is on `LibSecurityConfiguration`. **Every** public method of an API
+  delegate (`…ApiDelegateImpl`, `be-api-contract-first`) carries a `@PreAuthorize` with a concrete
+  role (per ADR-00004 point 6: each endpoint requires a concrete role); the ArchUnit rule
+  `delegateMethodsArePreAuthorized` checks it (`be-archunit-rules`).
+- Expressions are constants in `Roles` (`HAS_…`), never string literals in annotations. A constants
+  class is enough — no helper that builds expressions at runtime.
+- Business role codes are placeholders until the role analysis fixes them; `ENTRY` and `ACTIVE` are
+  reserved names a business role code must not take.
+- Data scope (only the user's unit or projects) is not a role check; it belongs in the query
+  (`be-jdbc-client-reads`; the mechanism is still open — ADR-00008).
 
-Keep claim access in one component (see `templates/JwtClaimExtractor.java`); services ask it
-for the identity instead of reading claims themselves.
+## Filter chain, CORS and CSRF
 
-## Accessing the Current User
+See `templates/LibSecurityConfiguration.java`:
 
-Use the exact `(iss, sub)` pair — or the configured principal claim together with the issuer —
-as the external identity key, with a database unique constraint on that pair. Email and
-username are optional, mutable profile attributes, not account lookup or automatic
-account-linking keys, even when email is verified.
-The [ExternalIdentity template](templates/ExternalIdentity.java) accepts an already
-verified access token; signature, issuer, audience and expiry validation must happen first.
-Allow only configured issuers; never discover an arbitrary issuer URL from an untrusted token.
-For existing subject-only mappings, backfill the known issuer before introducing a second issuer.
-Account linking requires an explicit authenticated flow proving control of both accounts.
+- `STATELESS` sessions; form login, HTTP Basic, logout and request cache disabled.
+- **CSRF disabled**: the API accepts only `Authorization: Bearer`, never a cookie, so a cross-site
+  request cannot carry credentials. Re-enable it the day anything authenticates with a cookie.
+- **CORS disabled**: one origin per environment, the gateway routes `/auth` → Keycloak, `/api` →
+  backend, `/` → frontend; locally the Vite dev server proxies `/auth` and `/api`. Add a CORS mapping
+  with exact origins from the environment only if a real cross-origin caller appears.
+- Rules: health permitted; `GET` on `app.security.me-path` (`/api/users/me`) → `ENTRY`, declared
+  **before** `/api/**` → `ACTIVE`; everything else `denyAll()` (add explicit rules for anything
+  new). The `ERROR` dispatch is permitted so error responses are not turned into `403`. The path is
+  never a constant in the library; it must equal the contract's path, and an IT ("paired user whose
+  token has only the entry role → `200` on `/api/users/me`") fails when they differ.
+- Access denied → one `AccessDeniedHandler` that hands the exception to the global handler of
+  `lib-web` (`be-problem-details-rfc9457`): a person who is unpaired, without role or suspended gets `403`
+  `/problems/no-access` with `reason` (`UNPAIRED`, `NO_ROLE`, `SUSPENDED`) on **any** call; everyone
+  else `403` `/problems/access-denied`.
 
-See [OpenID claim stability](https://openid.net/specs/openid-connect-core-1_0.html#ClaimStability).
+## `/api/users/me`
 
-In a contract-first API the controller is generated; read the principal in the hand-written
-delegate or service, not by changing the generated controller:
+The frontend loads `GET /api/users/me` right after sign-in; the answer decides whether the
+application or the "no access" screen is shown. Per ADR-00004 point 6 it is the one status endpoint:
+it returns identity, roles and permissions, or a refusal with a reason. ADR-00004 leaves the exact
+path to the contract; these skills use `/api/users/me` (no version segment, ADR-00007 point 12), and
+`app.security.me-path` must carry the same value.
 
-```java
-@Service
-public class MyOrdersQuery {
-    private final JwtClaimExtractor claims;
-    private final OrderReadRepository orders;
+- Callable with `ROLE_ENTRY` alone; the backend decides from its database.
+- `200` → identity, roles, `permissions` (codes the frontend mirrors for display only; the backend
+  authorises every endpoint itself). `Cache-Control: no-store`.
+- `403` `application/problem+json`, `type` `/problems/no-access`, `reason` `UNPAIRED` · `NO_ROLE` ·
+  `SUSPENDED`. The frontend shows the reason and keeps the user signed in.
+- An unpaired account is audited with its `sub` (per ADR-00004 point 5: the technical account id is
+  stored only for audit).
+- Sketch: `templates/UsersApiDelegateImpl.java` — the API delegate makes one call to a query
+  service, which throws `NoAccessException` or returns the read model.
 
-    public MyOrdersQuery(JwtClaimExtractor claims, OrderReadRepository orders) {
-        this.claims = claims;
-        this.orders = orders;
-    }
+## Reading the current user in services
 
-    public List<OrderSummary> myOrders() {
-        ExternalIdentity identity = claims.getIdentity();
-        return orders.findByOwner(identity.issuer(), identity.subject());
-    }
-}
-```
+`AppAuthentication.current()` gives the principal (personal number), the person id and the
+no-access reason. Services take what they need as parameters where practical; nothing parses
+claims except the converter.
 
-## Method Security
+## Changes this needs outside the code
 
-```java
-@PreAuthorize("hasAuthority('SCOPE_orders:read')")
-public List<Order> findAll() { ... }
+Target state of the realm and the environment; check each item in the repository and do what is
+missing as a separate task.
 
-@PreAuthorize("hasRole('ADMIN') or @orderSecurity.isOwner(#orderId, authentication)")
-public Order findById(Long orderId) { ... }
-
-// Custom security bean
-@Component("orderSecurity")
-public class OrderSecurityService {
-    private final OrderReadRepository orderRepository;
-
-    public OrderSecurityService(OrderReadRepository orderRepository) {
-        this.orderRepository = orderRepository;
-    }
-
-    public boolean isOwner(Long orderId, Authentication auth) {
-        Jwt jwt = (Jwt) auth.getPrincipal();
-        ExternalIdentity identity = ExternalIdentity.from(jwt);
-        return orderRepository.existsByIdAndOwner(orderId, identity.issuer(), identity.subject());
-    }
-}
-```
-
-## Verification scope
-
-The upstream repository fixture targets Boot 4.1.0 with Java 17/21 and checks signed-token
-validation and issuer/subject mapping; it does not contact a production identity provider.
-The Elysium base (JDK 25) has not re-run that fixture. Check the
-[upstream coverage matrix](https://github.com/rrezartprebreza/spring-boot-skills/blob/main/verification/MATRIX.md)
-before treating another minor version or an illustrative snippet as verified.
+1. **Signature algorithm.** In `keycloak/config/realm.yaml` (applies to every environment, overlays in
+   `keycloak/config/<environment>/` must not override it) `defaultSignatureAlgorithm: RS256`.
+   Tokens issued before a switch fail with `401` until renewed (at most one access-token lifetime).
+2. **No other token verification.** Nothing but this backend verifies tokens: no shared HS256 key
+   provider in the realm, no database objects that verify tokens, no secret shared for that purpose
+   in `.env.example` files or migration placeholders. Where such a setup exists, remove it together
+   with its variables; the backend needs only `OPERETA_OIDC_ISSUER_URI`, `OPERETA_OIDC_JWKS_URI`,
+   `OPERETA_OIDC_AUDIENCE`, `OPERETA_OIDC_CLIENT_ID` (and optionally `OPERETA_OIDC_ENTRY_ROLE`).
+3. **API audience.** A client for the API (no flows enabled) and an audience mapper on the frontend
+   client so `aud` contains the API audience.
+4. **Entry role.** The entry role as a client role of the API client, granted through the single AD
+   entry group of the environment (per ADR-00004 point 4).
+5. **Personal number claim.** A user-attribute mapper putting `personal_number` into the access token;
+   no name or e-mail in the access token (per ADR-00004 point 2).
+6. **Test accounts.** Fictitious accounts with personal numbers matching the fictitious persons of the
+   test data (`db-flyway-migrations`), on LOCAL, DEV and TEST, never on PROD (per ADR-00004 point 8).
 
 ## Gotchas
-- Agent hard-codes issuer, JWK URL, audience or CORS origins — all come from environment variables
-- (Opereta) Agent grants business roles from token claims or lets `ROLE_OPERETA_USER` reach anything but `/api/me` — business roles come from the database and require `ROLE_PAIRED`
-- (Opereta) Agent adds a separate `/api/me/status` endpoint or returns a generic access-denied problem for a suspended person — one `/api/me`, and `403` `/problems/no-access` with `reason` everywhere
-- (Opereta) Agent identifies people by `sub`, email or username — the principal is `personal_number`
-- Agent enables CORS with `localhost:3000` or `*` in a same-origin deployment — leave CORS disabled unless the frontend really runs on another origin
-- Agent maps business roles from the token AND from the database — pick one model; with application roles the token only identifies the person
-- Agent normalizes claims in several places (controller, service, filter) — one converter bean, one claim extractor
-- Agent finds or merges accounts by email — use the verified issuer/subject pair (or the configured principal claim); email changes must not change ownership
-- Agent calls `setAuthoritiesClaimName(...)` on `JwtGrantedAuthoritiesConverter` — it replaces the default `scope`/`scp` lookup, so `SCOPE_*` authorities vanish (and Okta/Entra `scp` scopes are dropped); extend the defaults instead
-- Agent parses `jwt.getSubject()` with `UUID.fromString` — Auth0 (`auth0|...`) and Okta (`00u...`) subjects aren't UUIDs; the request fails with 500
-- Agent omits `audiences` — the resource server then accepts any token the issuer minted for any client
-- Agent uses `hasRole("ADMIN")` for scope check — scopes use `hasAuthority("SCOPE_admin")`
-- Agent forgets `issuer-uri` validation — always configure to prevent token forgery
-- Agent maps roles wrong for Keycloak — roles are nested under `realm_access.roles`
-- Agent uses `getPrincipal()` directly — cast to `Jwt` or use `@AuthenticationPrincipal Jwt`
-- Agent adds `userDetailsService` bean or a login form — not needed for resource servers (stateless JWT)
-- Agent adds the Boot 3 starter `spring-boot-starter-oauth2-resource-server` — Boot 4 renamed security starters; use `spring-boot-starter-security-oauth2-resource-server`
-- Agent uses non-lambda chaining (`.oauth2ResourceServer().jwt()`, `.and()`) — removed in Security 7, won't compile; lambda DSL only
-- Agent writes `antMatchers()` / `AntPathRequestMatcher` — removed in Security 7; use `requestMatchers("/path/**")` (backed by `PathPatternRequestMatcher`)
-- Agent mocks `JwtDecoder` with `@MockBean` in tests — removed in Boot 4; use `@MockitoBean` (and `@AutoConfigureMockMvc` — `@SpringBootTest` no longer provides `MockMvc`)
+
+- Agent uses `issuer-uri` alone inside containers — startup or first request fails on discovery; add `jwk-set-uri`
+- Agent sets `issuer-uri` to the internal Keycloak address — `iss` carries the public origin; the check fails with `401`
+- Agent omits `audiences` or the `azp` validator — tokens for other clients are accepted
+- Agent keeps HS256 or adds a shared secret — RS256 with JWKS only
+- Agent raises clock skew to make tests pass — fix the clock or the test token
+- Agent grants business roles from token claims — application database only; the token gives `ENTRY`
+- Agent identifies people by `sub`, e-mail or username — `personal_number`
+- Agent writes role strings in `@PreAuthorize` — constants from `Roles`
+- Agent leaves an operation without `@PreAuthorize` or relies on `authenticated()` — every operation needs a concrete role
+- Agent returns a generic `403` for a suspended person — `/problems/no-access` with `reason`
+- Agent enables CORS for `localhost` or `*` — same origin, CORS stays off
+- Agent adds a profile that switches security off — tests use `jwt()`; per ADR-00004 such a profile may serve only automated tests and must not start on DEV, TEST or PROD
+- Agent's global `@ExceptionHandler(Exception.class)` swallows `AccessDeniedException` — map it explicitly to `403`
+- Agent uses the non-lambda DSL, `and()`, `antMatchers()` or `WebSecurityConfigurerAdapter` — removed in Security 7
+- Agent mocks `JwtDecoder` with `@MockBean` — removed in Boot 4; tests use `jwt()` (`be-spring-testing-security`)
 
 ## Provenance
 
-Adapted for the Elysium Java base (JDK 25, Spring Boot 4, Spring Security 7).
+Adapted for this application's Java base (JDK 25, Spring Boot 4, Spring Security 7).
 Source: [rrezartprebreza/spring-boot-skills](https://github.com/rrezartprebreza/spring-boot-skills),
 `skills/spring-boot-4/oauth2-resource-server`, MIT License, © Rrezart Prebreza.
-Opereta layer: application roles from the database, `personal_number` principal, paired accounts, one `/api/me` with `403` `/problems/no-access` reasons, `OPERETA_OIDC_*` variables.
-Changes: issuer/audience/principal claim and CORS from the environment, same-origin default
-without CORS, token roles vs. application roles, `Long` IDs, controller example replaced by a
-service reading the identity (generated controllers).
+Changes: rewritten for Keycloak (RS256 via JWKS, public issuer vs. internal JWKS URI, `azp` validator),
+application roles from the database, role constants, `/api/users/me`, `lib-security` module.
+Opereta layer: personal number as principal, entry role, no-access reasons, realm tasks.

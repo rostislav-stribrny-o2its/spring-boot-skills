@@ -1,0 +1,23 @@
+{
+  "generatorName": "spring",
+  "modelNameSuffix": "Dto",
+  "additionalProperties": {
+    "delegatePattern": true,
+    "interfaceOnly": false,
+    "skipDefaultInterface": false,
+    "useSpringBoot4": true,
+    "useJackson3": true,
+    "useBeanValidation": true,
+    "openApiNullable": false,
+    "useTags": true,
+    "documentationProvider": "none",
+    "annotationLibrary": "none",
+    "hideGenerationTimestamp": true
+  },
+  "globalProperties": {
+    "apiDocs": "false",
+    "modelDocs": "false",
+    "apiTests": "false",
+    "modelTests": "false"
+  }
+}

@@ -1,0 +1,71 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Template: backend/api-spec/pom.xml - the small app that exports the spec at build (ADR-00006, point 2).
+     pre-integration-test: start the app; integration-test: fetch each spec group and write it to specs/;
+     post-integration-test: stop. One springdoc execution per spec file.
+     Not yet verified by a build in this repository. -->
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <parent>
+        <groupId>app</groupId>
+        <artifactId>backend</artifactId>
+        <version>0.0.1</version>
+    </parent>
+
+    <artifactId>api-spec</artifactId>
+
+    <properties>
+        <!-- Fixed port of the export app; must be free on the build machine. -->
+        <api-spec.port>8070</api-spec.port>
+        <api-spec.docs>http://localhost:${api-spec.port}/v3/api-docs</api-spec.docs>
+        <api-spec.out>${repo.root}/specs/${spec.app}/openapi</api-spec.out>
+    </properties>
+
+    <dependencies>
+        <dependency><groupId>app</groupId><artifactId>api-model</artifactId></dependency>
+        <dependency><groupId>org.springframework.boot</groupId><artifactId>spring-boot-starter-webmvc</artifactId></dependency>
+        <dependency><groupId>org.springframework.boot</groupId><artifactId>spring-boot-starter-validation</artifactId></dependency>
+        <dependency><groupId>org.springdoc</groupId><artifactId>springdoc-openapi-starter-webmvc-api</artifactId></dependency>
+        <dependency><groupId>org.springframework.boot</groupId><artifactId>spring-boot-starter-webmvc-test</artifactId><scope>test</scope></dependency>
+    </dependencies>
+
+    <build>
+        <plugins>
+            <plugin>
+                <groupId>org.springframework.boot</groupId>
+                <artifactId>spring-boot-maven-plugin</artifactId>
+                <configuration>
+                    <mainClass>app.apispec.ApiSpecApplication</mainClass>
+                    <arguments><argument>--server.port=${api-spec.port}</argument></arguments>
+                    <jmxPort>9070</jmxPort> <!-- unique per started app in the reactor -->
+                </configuration>
+                <executions>
+                    <!-- Not a deliverable: never repackage. -->
+                    <execution><id>repackage</id><phase>none</phase></execution>
+                    <execution><id>start-export-app</id><phase>pre-integration-test</phase><goals><goal>start</goal></goals></execution>
+                    <execution><id>stop-export-app</id><phase>post-integration-test</phase><goals><goal>stop</goal></goals></execution>
+                </executions>
+            </plugin>
+            <plugin>
+                <groupId>org.springdoc</groupId>
+                <artifactId>springdoc-openapi-maven-plugin</artifactId>
+                <executions>
+                    <!-- One execution per spec file: group = <visibility>-<area>-<module>.
+                         Area "main" is an example; one execution per area listed in docs/design/backend/. -->
+                    <execution>
+                        <id>export-public-main-backend</id>
+                        <phase>integration-test</phase>
+                        <goals><goal>generate</goal></goals>
+                        <configuration>
+                            <apiDocsUrl>${api-spec.docs}/public-main-backend</apiDocsUrl>
+                            <outputDir>${api-spec.out}/public/main</outputDir>
+                            <outputFileName>backend-service-public.json</outputFileName>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
+        </plugins>
+    </build>
+</project>
