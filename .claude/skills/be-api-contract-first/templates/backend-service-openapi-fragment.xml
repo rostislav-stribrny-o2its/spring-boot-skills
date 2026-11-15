@@ -1,0 +1,24 @@
+<!-- Fragment for backend/backend-service/pom.xml <build><plugins>: generate Java from the committed spec.
+     Version, configurationFile (openapi-generator.json), templateDirectory and skipValidateSpec=false
+     come from the parent's pluginManagement. One execution per spec file (area).
+     Generated code lands in target/ and is never committed (ADR-00006, point 5).
+     Area "main" is an example: one execution per area listed in docs/design/backend/.
+     Not yet verified by a build in this repository. -->
+<plugin>
+    <groupId>org.openapitools</groupId>
+    <artifactId>openapi-generator-maven-plugin</artifactId>
+    <executions>
+        <execution>
+            <id>generate-main</id>
+            <goals><goal>generate</goal></goals>
+            <configuration>
+                <inputSpec>${repo.root}/specs/${spec.app}/openapi/public/main/backend-service-public.json</inputSpec>
+                <apiPackage>app.backend.api.generated.main</apiPackage>
+                <modelPackage>app.backend.api.generated.main.model</modelPackage>
+                <!-- Only ApiUtil: the full supporting files would add a second @SpringBootApplication. -->
+                <supportingFilesToGenerate>ApiUtil.java</supportingFilesToGenerate>
+                <output>${project.build.directory}/generated-sources/openapi-main</output>
+            </configuration>
+        </execution>
+    </executions>
+</plugin>

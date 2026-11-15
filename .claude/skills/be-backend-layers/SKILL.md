@@ -1,157 +1,220 @@
 ---
 name: be-backend-layers
 description: >
-  Use when creating or changing any class of a Spring Boot 4 backend — API delegates, services,
-  domain classes, repositories, mappers, configuration. Defines the layers (generated
-  controller → API delegate → @Service → @Repository), the three type families (…Dto, domain,
-  …Entity/…Row) with their MapStruct mappers, the read and write paths, packages and
-  cross-cutting rules, so that business logic stays in one place.
+  Java/Spring backend: use when adding or moving a class between the layers of a domain module in
+  backend-service — the API delegate implementing the generated …ApiDelegate, services and their
+  transaction boundary, write repositories (Spring Data JDBC) and read repositories (JdbcClient),
+  the three object layers with MapStruct, packages per module and the dependency direction
+  ArchUnit enforces. Maven modules and lib-* composition: be-maven-reactor.
 ---
 
 # Backend Layers
 
-The Elysium Java base is a **layered** application. Each layer has one job; ArchUnit tests
-enforce the direction (see `be-archunit-rules`).
+The backend is **layered**, one predictable pattern in every domain module (ADR-00008 point 6:
+"stejně ve všech doménových modulech"). Each layer has one job; ArchUnit fails the build when a
+dependency points the wrong way (`be-archunit-rules`).
 
 ```
-generated controller   ← from the contract (api-contract-first); never edited
-      ↓ …Dto
-API delegate           ← @Component …ApiDelegateImpl: …ApiMapper (MapStruct), ONE service call
-      ↓ domain types / commands                     ↑ domain types or …Row projections
-@Service               ← ALL business logic, @Transactional, orchestration
-      ↓ domain types
-@Repository            ← persistence: Spring Data JDBC aggregates + …PersistenceMapper (writes),
-      ↓                  JdbcClient queries returning …Row / Stream<…Row> (reads)
-PostgreSQL             ← structure and declarative constraints only, no business logic
+generated …ApiController  ← from the contract (be-api-contract-first); never edited, never committed
+      ↓ calls the generated …ApiDelegate interface
+API delegate              ← …ApiDelegateImpl (@Component): …ApiMapper (MapStruct) + ONE service call
+      ↓ domain commands / domain records          ↑ domain records or …Row read models
+service                   ← @Service: ALL business logic; @Transactional = one service operation
+      ↓ domain records                             ↓ read parameters
+write repository          read repository
+(Spring Data JDBC         (JdbcClient, SQL in text blocks,
+ aggregate + …Persistence  returns …Row / page / Stream<…Row>)
+ Mapper)
+      ↓                                            ↓
+PostgreSQL 18             ← schema from Flyway only; integrity constraints, no business logic
 ```
 
-## Three type families
+## Applications and libraries
 
-| Family | Naming | Where | Rules |
-|---|---|---|---|
-| API | `OrderDto`, `CreateOrderDto` | generated from the spec | used only in the API layer |
-| Domain | `Order`, `Money`, `CreateOrderCommand` | `…domain` / `…service` | behavior and invariants; no Spring Data, no Jackson, no validation-for-HTTP annotations |
-| Persistence | `OrderEntity` (aggregate root written by Spring Data JDBC), `OrderSummaryRow` (read projection) | `…persistence` | table mapping only, no behavior; never leaves the persistence and read paths |
-
-Mappers are MapStruct interfaces that all use one shared configuration
-`@MapperConfig(componentModel = "spring", unmappedTargetPolicy = ReportingPolicy.ERROR,
-typeConversionPolicy = ReportingPolicy.ERROR)` — a forgotten field or a lossy conversion is a
-compile error (ArchUnit checks that every mapper uses it):
-- `…ApiMapper` — `…Dto` ↔ domain (and `…Row` → `…Dto` on the read path), in the API layer;
-- `…PersistenceMapper` — domain ↔ `…Entity`, in the persistence layer.
-No static `from(...)` factories on DTOs, no hand-written mapping loops (see `be-mapstruct-dto-layers`).
-
-## Write path and read path
-
-- **Writes always go through the domain:** delegate maps `…Dto` → command/domain → service
-  loads the aggregate via the repository (domain object), calls its behavior, saves → delegate
-  maps the result to `…Dto`.
-- **Reads may bypass the domain:** a query service (`@Transactional(readOnly = true)`) calls a
-  read repository (`JdbcClient`) that returns `…Row` projections — a query service may return
-  `…Row`s; the delegate maps `…Row` → `…Dto`.
-- **Large reads stream:** the repository returns a `Stream<…Row>`; it is consumed in
-  try-with-resources **inside the query service's transaction**. The delegate passes the mapping
-  as a function, so mapping happens row by row inside the transaction, rows become
-  garbage-collectable immediately, and only the finished result leaves:
-
-```java
-// query service
-@Transactional(readOnly = true)
-public <R> R exportOrders(LocalDate day, Function<Stream<OrderRow>, R> consumer) {
-    try (Stream<OrderRow> rows = orderReadRepository.streamByDay(day)) {
-        return consumer.apply(rows);
-    }
-}
-
-// delegate
-List<OrderLineDto> lines = orderQueries.exportOrders(day, rows -> rows.map(mapper::toDto).toList());
-```
-
-## Layer rules
-
-**Generated controller + API delegate**
-- The controller is generated; the delegate (`@Component`, not `@Service`) maps and calls exactly
-  one service method. No business decisions, no `@Transactional`, no repository injection.
-- Validation of the request shape comes from the contract (`useBeanValidation`); business
-  validation belongs to the domain/service.
-- Exceptions propagate to one `@RestControllerAdvice` producing Problem Details; no try/catch
-  for flow control.
-
-**`@Service`**
-- All business logic, rules and orchestration; `@Transactional` of your own code lives here —
-  never on your delegates or your `@Repository` classes. The built-in transactional behavior of
-  Spring Data repositories stays untouched (see `be-transactional-patterns`).
-- Takes and returns domain types or commands — never `…Dto`, `…Entity`, `HttpServletRequest` or
-  `ResponseEntity`.
-- One service per aggregate or use-case area, not god classes; a separate query service for the
-  read side is fine.
-- Retries and concurrency limits with Framework 7 `@Retryable` / `@ConcurrencyLimit`
-  (`@EnableResilientMethods`), see `be-resilience-retry`.
-
-**`@Repository`**
-- Write side: wraps a Spring Data JDBC repository of the aggregate root (`ListCrudRepository<OrderEntity, Long>`)
-  and maps with the `…PersistenceMapper`; exposes domain types to the service.
-- Read side: `JdbcClient` with named parameters, returning `…Row` records, `Optional<…Row>` or
-  `Stream<…Row>`; SQL composed only from fixed fragments and bound parameters.
-- No business logic, no JPA, no `Object[]` results.
-
-**Database**
-- Schema only through Flyway; constraints are declarative; no triggers or procedures for business
-  logic (see `db-flyway-migrations`, `db-design-postgres-tables`).
+- **`backend-service`** — the REST API for the frontend, all business logic, its own scheduled jobs.
+- **`scheduler-service`** — reads source systems into the `integration` schema; no domain model,
+  no layers of this skill (see `be-scheduler-service`).
+- **Role is decided by the Maven module, never by a Spring profile.** Profiles only select
+  environment behaviour (LOCAL, DEV, TEST, PROD). A profile that switches a role's classes on or
+  off is a review finding (ADR-00002 point 2).
+- **Shared libraries `lib-<topic>`** (`lib-core`, `lib-db`, `lib-web`, `lib-security`) carry code
+  both applications or several modules need; each has one entry `@Configuration`, composed by the
+  application with explicit `@Import`. Module list, what lives in which library, the entry
+  configuration and main-class placement: `be-maven-reactor` (the only home of that pattern).
 
 ## Packages
 
-Package by **design module** first, then by layer:
+Package by **domain module** first, then by layer:
 
 ```
-com.example.<app>.<module>.api           delegate implementations, …ApiMapper
-com.example.<app>.<module>.api.generated generated controllers and …Dto (target/, not committed)
-com.example.<app>.<module>.service       @Service, commands
-com.example.<app>.<module>.domain        domain classes, value objects, domain events
-com.example.<app>.<module>.persistence   @Repository, …Entity, …Row, …PersistenceMapper, Spring Data repositories
-com.example.<app>.config                 @Configuration, @ConfigurationProperties
+app.backend                                   main class, application wiring (@Import)
+app.backend.config                            @Configuration of this application only
+app.backend.api.generated.<area>              generated …Api, …ApiController, …ApiDelegate and …Dto
+                                              (target/, not committed; be-api-contract-first)
+app.backend.<module>.api                      …ApiDelegateImpl (API delegates), …ApiMapper
+app.backend.<module>.service                  @Service, commands, domain exceptions
+app.backend.<module>.domain                   domain records, value objects, enums
+app.backend.<module>.persistence              write repositories, …Entity, …PersistenceMapper,
+                                              Spring Data interfaces (package-private),
+                                              read repositories, …Row read models
+app.lib.<topic>..                             shared library code (one entry @Configuration)
 ```
 
-Cross-module calls go service → service (never into another module's persistence).
+A module is a package of code, not a database schema: phase 1 has one backend schema
+(ADR-00008 point 12). SQL and `@Table` names of that schema are unqualified (the connection's
+`search_path` is the backend schema); tables of schema `integration` are always qualified
+(`db-flyway-migrations`).
 
-## Configuration
+## Three object layers (ADR-00008 point 6)
 
-- Every value that differs between environments (URLs, credentials, limits, schedules, feature
-  switches) comes from configuration bound to a validated `@ConfigurationProperties` record —
-  never a constant in code, never `@Value` scattered over classes (see `be-configuration-properties`).
-- `@Configuration` classes wire infrastructure only and never depend on services.
+| Layer | Naming | Written by | Rules |
+|---|---|---|---|
+| API | `OrderDto`, `CreateOrderDto` | generator | only in `..api..`; never hand-written, never edited |
+| Domain | `Order`, `OrderStatus`, `CreateOrderCommand` | you | `record`s without persistence annotations; no Spring Data, no Jackson, no generated types |
+| Persistence | `OrderEntity` (aggregate root), `OrderSummaryRow` (read model) | you | table mapping only, no behaviour |
 
-## Cross-cutting rules
+Every crossing is a MapStruct mapper on the shared configuration — `…ApiMapper` in `..api..`,
+`…PersistenceMapper` in `..persistence..` (`be-mapstruct-dto-layers`). A property that is not
+mapped is a compile error.
 
-- Constructor injection only. Lombok is optional in the base: where the project enables it,
-  `@RequiredArgsConstructor` and `@Slf4j` are fine; data carriers are `record`s either way.
-- Logging via SLF4J, never `System.out`; no secrets or personal data in logs.
-- JSON is Jackson 3 (`tools.jackson`): customize with `JsonMapperBuilderCustomizer` / `JsonMapper`
-  beans and `@JacksonComponent`, not `ObjectMapper` / `@JsonComponent`.
-- An interface is introduced only with a concrete reason (a second implementation, a module
-  boundary); no ports and adapters for their own sake.
-- Numbers: IDs `Long`, exact values `BigDecimal`; never `double`/`float` for money or quantities;
-  no `intValue()`/`longValue()` on `BigDecimal`/`BigInteger` outside a dedicated converter.
+**Writes always go through the domain; reads may skip it** (ADR-00008 point 6):
+
+- write: `CreateOrderDto` → `…ApiMapper` → command → service loads the domain record from the write
+  repository, applies the rule, saves → result domain record → `…ApiMapper` → `OrderDto`;
+- read: API delegate → query service (`@Transactional(readOnly = true)`) → read repository returns
+  `…Row` / page of `…Row` → `…ApiMapper` → `…Dto`. Even a read restricts rows to what the user may
+  see (the mechanism is not decided yet — ADR-00008 "Co ADR neurčuje").
+
+## Layer rules
+
+**API delegate** (`..api..`)
+
+```java
+@Component
+@RequiredArgsConstructor
+public class OrdersApiDelegateImpl implements OrdersApiDelegate {   // generated delegate interface
+
+    private final OrderService orderService;
+    private final OrderApiMapper mapper;
+
+    @Override
+    @PreAuthorize(Roles.HAS_PROJECT_MANAGER)                         // every operation: a concrete role
+    public ResponseEntity<OrderDto> createOrder(CreateOrderDto body) {
+        Order created = orderService.create(mapper.toCommand(body));
+        return ResponseEntity.status(HttpStatus.CREATED).body(mapper.toDto(created));
+    }
+}
+```
+
+- Implements the generated `…ApiDelegate` (delegate pattern; generator options are owned by
+  `be-api-contract-first`). The generated `…ApiController` carries the mapping annotations and
+  bean validation and calls the delegate; never write a `@RestController` of your own.
+- Every operation is overridden; one that is not answers `501` (a web test per operation catches it).
+- `@PreAuthorize` with a role constant on every public method (`be-oauth2-resource-server`).
+- Maps, makes **one** service call, maps back. No business decision, no `@Transactional`, no
+  repository, no `try/catch` for flow control — exceptions go to the one global handler
+  (`be-problem-details-rfc9457`).
+- A streamed export passes a mapping function into the query service, so mapping runs row by row
+  inside the transaction (see `be-jdbc-client-reads`).
+
+**Service** (`..service..`)
+
+```java
+@Service
+@RequiredArgsConstructor
+public class OrderService {
+
+    private final OrderRepository orders;               // write repository (domain in, domain out)
+    private final CustomerService customers;           // other module: through its service
+    private final Clock clock;
+
+    @Transactional
+    public Order create(CreateOrderCommand command) {
+        customers.requireActive(command.customerId());
+        return orders.save(Order.create(command, clock));
+    }
+}
+```
+
+- A concrete class with constructor injection; an interface only with a concrete reason
+  (ADR-00002 point 7: generated implementation, module or external-system boundary, several
+  implementations).
+- **One service operation = one transaction** (ADR-00008 point 14). It may change several
+  aggregates. Isolation is PostgreSQL's default `READ COMMITTED` — do not set another level.
+- A version conflict leaves the service as `OptimisticLockingFailureException` and becomes `409`
+  **without retry**; a deadlock is retried **once** automatically, around the whole transaction, from
+  a separate bean (ADR-00008 point 14). Mechanics in `be-transactional-patterns`; HTTP mapping in
+  `be-problem-details-rfc9457`.
+- Takes and returns domain types, commands or `…Row` read models — never `…Dto`, `…Entity`,
+  `HttpServletRequest` or `ResponseEntity`.
+- Cross-module calls go service → service. Never into another module's persistence package.
+- Time from an injected `Clock`; "today" in Europe/Prague (ADR-00008 point 15).
+
+**Write repository** (`..persistence..`) — a `@Repository` class that wraps a package-private
+Spring Data JDBC `ListCrudRepository<…Entity, Long>` and the `…PersistenceMapper`; exposes only
+domain records; returns the saved copy (it carries the new `id` / `version`). Aggregate rules,
+`@Version` and child collections: `be-spring-data-jdbc-aggregates`.
+
+**Read repository** (`..persistence..`) — a `@Repository` class with `JdbcClient`; named
+parameters, fixed SQL fragments, `…Row` results, pages of at most 500 rows, streams only for
+export and batches (ADR-00008 point 7): `be-jdbc-client-reads`.
+
+Technical tables of `backend-service` (job queue, integration control tables, audit) use SQL via
+`JdbcClient` without domain model or aggregates; a bulk write from domain objects may use batched
+SQL (ADR-00008 point 4).
+
+**Database** — schema only from Flyway migrations; declarative constraints; no procedures or
+triggers with business logic (`db-flyway-migrations`, `db-design-postgres-tables`).
+
+## Dependency direction (ArchUnit)
+
+```
+api ──► service ──► domain ◄── persistence
+ │         └──────► persistence (write + read repositories)
+ └──► persistence: only …Row read models
+```
+
+- `..domain..` depends on nothing of Spring Data, Jackson, generated API types or persistence.
+- `..api.generated..` types are used only in `..api..`; `…Entity` never reaches `..api..`.
+- Spring Data repositories are called only from the write path of services (ADR-00008).
+- `@Transactional` only in `..service..`; `@Mapper` only with the shared config; no field
+  injection; no `System.out`. Rule code: `be-archunit-rules`.
+
+## Cross-cutting
+
+- Lombok only for `@Slf4j`, `@RequiredArgsConstructor`, `@Builder` in hand-written code; data
+  carriers are records, including `@ConfigurationProperties` (`be-lombok`).
+- JSON is Jackson 3 (`tools.jackson`): customise with `JsonMapperBuilderCustomizer` / `JsonMapper`
+  beans, never a hand-made `ObjectMapper`.
+- Numbers: IDs `Long`, exact values `BigDecimal`, never `double` for money or effort
+  (`be-numbers-and-ids`).
+- Configuration values that differ between environments come from validated
+  `@ConfigurationProperties` records — no constants, no scattered `@Value`.
+- Logging and the correlation ID header: `be-correlation-logging`. Errors: one global handler,
+  `be-problem-details-rfc9457`. Scheduled jobs: `be-scheduling-shedlock`.
+- Tests: `*Test` (unit, slice; Surefire) and `*IT` (Spring context + Testcontainers; Failsafe) —
+  `be-testing-conventions`.
 
 ## Gotchas
-- Agent puts business logic in the delegate, a mapper or a repository — it belongs in the domain or `@Service`
-- Agent injects a repository into the delegate — the delegate calls one service method
+- Agent puts business logic in the API delegate, a mapper or a repository — domain or service
+- Agent injects a repository into the API delegate — one service call per endpoint
+- Agent writes a `@RestController` next to the generated controller — implement the generated `…ApiDelegate`
 - Agent passes `…Dto` into a service or returns `…Entity` from it — services speak domain types
-- Agent writes static `OrderDto.from(order)` factories or manual mapping loops — MapStruct mappers
-- Agent puts `@Transactional` on the delegate or its own `@Repository` class — on services only (Spring Data's built-in repository transactions stay)
-- Agent annotates the delegate with `@Service` — it is an adapter (`@Component`)
-- Agent uses JPA (`JpaRepository`, `@Entity`, `@EnableJpaAuditing`) — Spring Data JDBC + `JdbcClient` only
-- Agent loads entities item by item to build a list screen — a read query returning projections
-- Agent returns an open `Stream` to the delegate — the query service consumes it inside its transaction, applying the delegate's mapping function
-- Agent creates a `@Configuration` that depends on a `@Service` — configuration wires infrastructure only
-- Agent hard-codes environment values — `@ConfigurationProperties`
-- Agent uses `@Autowired` field injection — constructor injection
-- Agent defines an `ObjectMapper` bean — Boot 4 uses Jackson 3 `JsonMapper`
-- Agent adds spring-retry — Framework 7 has `@Retryable` built in
+- Agent writes static `OrderDto.from(order)` or manual mapping loops — MapStruct mapper
+- Agent puts `@Transactional` on the API delegate or a repository class — services only
+- Agent sets `isolation = SERIALIZABLE` or retries version conflicts — `READ COMMITTED`; conflict → `409`
+- Agent adds `interface OrderService` + `OrderServiceImpl` without a reason — concrete class
+- Agent creates a Spring profile `scheduler` / `api` that enables classes — role by module only
+- Agent adds `AutoConfiguration.imports` to a `lib-*` module — one entry `@Configuration`, imported explicitly
+- Agent puts the main class in package `app` — it scans `app.lib..`; libraries become active without `@Import`
+- Agent calls another module's repository — call that module's service
+- Agent adds JPA (`@Entity`, `JpaRepository`) — Spring Data JDBC + `JdbcClient` only
+- Agent edits or commits generated API code — change the model, regenerate
 
 ## Provenance
 
-Rewritten for the Elysium Java base (JDK 25, Spring Boot 4, contract-first API, Spring Data JDBC + `JdbcClient`,
-MapStruct, three type families). Source: [rrezartprebreza/spring-boot-skills](https://github.com/rrezartprebreza/spring-boot-skills),
-`skills/spring-boot-4/layered-architecture` (layer responsibilities, service and configuration rules), MIT License,
-© Rrezart Prebreza. The original is kept in `_unused/skills/spring-boot-4/layered-architecture`.
+Rewritten for this application's Java base (JDK 25, Spring Boot 4, contract-first API, Spring Data
+JDBC + `JdbcClient`, MapStruct, three object layers). Layer responsibilities and service rules
+derive from `skills/spring-boot-4/layered-architecture` in
+[rrezartprebreza/spring-boot-skills](https://github.com/rrezartprebreza/spring-boot-skills) (MIT,
+© Rrezart Prebreza).

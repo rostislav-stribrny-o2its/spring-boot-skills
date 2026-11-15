@@ -1,0 +1,31 @@
+# Fragment of backend-service application.yaml. Every value comes from the environment
+# (ADR-00003 point 7); no URL or client id is a constant in code or in a committed profile file.
+#
+# Examples (realm "app"; Keycloak behind the app origin under /auth):
+#   APP_OIDC_ISSUER_URI  LOCAL  http://localhost:3001/auth/realms/app
+#                            env    https://<app host>/auth/realms/app   (= KC_HOSTNAME + /realms/app)
+#   APP_OIDC_JWKS_URI    backend on the host   http://localhost:8180/auth/realms/app/protocol/openid-connect/certs
+#                            backend in a container http://keycloak:8080/auth/realms/app/protocol/openid-connect/certs
+#   APP_OIDC_AUDIENCE    API audience / API client id, e.g. app-api
+#   APP_OIDC_CLIENT_ID   frontend client (azp), e.g. app-spa
+spring:
+  security:
+    oauth2:
+      resourceserver:
+        jwt:
+          # Compared byte for byte with the token's "iss": the PUBLIC address, no trailing slash.
+          issuer-uri: ${APP_OIDC_ISSUER_URI}
+          # Where the backend fetches the public keys; may be internal. Setting it avoids discovery.
+          jwk-set-uri: ${APP_OIDC_JWKS_URI}
+          jws-algorithms: RS256
+          audiences: ${APP_OIDC_AUDIENCE}
+
+app:
+  security:
+    client-id: ${APP_OIDC_CLIENT_ID}
+    principal-claim: personal_number
+    entry-role: ${APP_OIDC_ENTRY_ROLE:app-user}
+    role-client-id: ${APP_OIDC_AUDIENCE}   # the entry role is a client role of the API client
+    me-path: /api/users/me                     # status endpoint; equal to the path in the API contract
+# Tests: no environment variable exists there; the shared IT base class sets these keys once
+# (be-testing-conventions), so the context starts and every IT shares one context.

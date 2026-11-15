@@ -1,88 +1,114 @@
 ---
 name: be-problem-details-rfc9457
 description: >
-  Use when implementing exception mapping or RFC 9457 error responses in Spring Boot 4.
-  Preserve an existing legacy error contract unless migration is requested.
+  Java/Spring backend: use when mapping exceptions to HTTP error responses — the one global
+  problem handler in lib-web, application/problem+json with type /problems/<code>, 422 field
+  errors vs 400 unreadable input, 403 no-access vs access-denied, 409 business rule vs stale
+  version, safe error texts and testing error responses.
 ---
 
 # Problem Details - RFC 9457
 
-## Choose the error contract
+ADR-00007 point 9 fixes the error contract of the API; this skill implements it. There is **one**
+global handler (`GlobalProblemHandler`) in `lib-web`, which only `backend-service` imports
+(`be-maven-reactor`), plus the correlation ID filter (`be-correlation-logging`). Nothing else
+builds error bodies.
 
-Inspect existing advice, security entry points and API tests first. Keep one error policy
-per API. Success DTOs or success envelopes can coexist with Problem Details errors:
-RFC 9457 specifies errors, not success representations.
+## The contract (ADR-00007 point 9)
 
-For an API using Problem Details, enable Spring's built-in MVC exception handling:
+| Situation | Status | `type` | Body |
+|---|---|---|---|
+| missing, invalid or expired token | `401` | — | **empty**; reason in `WWW-Authenticate` (security chain, `be-oauth2-resource-server`) |
+| unreadable body, wrong parameter type | `400` | `/problems/bad-request` | generic text |
+| invalid input (bean validation, field rules) | `422` | `/problems/validation` | `errors`: list of `{field, code, message}` |
+| person has no access (unpaired, no role, suspended) — on the status endpoint **and** any other call | `403` | `/problems/no-access` | `reason`: `UNPAIRED` · `NO_ROLE` · `SUSPENDED` |
+| missing permission to an operation or record | `403` | `/problems/access-denied` | generic text |
+| not found | `404` | `/problems/not-found` | fixed noun, no ID |
+| business rule violated | `409` | `/problems/<rule-code>` | fixed text |
+| stale record version (optimistic lock) | `409` | `/problems/stale-version` | no retry (ADR-00008 point 14) |
+| unexpected | `500` | `/problems/internal-error` | generic text; full exception only in the log |
+
+- Every body is `application/problem+json`; every response (errors included) carries the
+  correlation ID header — the filter sets it, not the handler.
+- An unknown request parameter is ignored, never `400`. No `423`, no `429`.
+- Texts **never repeat submitted values** (search terms, IDs, personal data). Framework messages
+  can echo input (`Failed to convert value 'abc'`), so the handler replaces them with the status
+  phrase.
+- Whether a record outside the user's permission answers `403` or `404`: open (decided by the
+  architecture owner, ADR-00007). The spelling of `<code>` in the type (`no-access` vs `NO_ACCESS`),
+  the names of the `errors` items and how `409`/`422` mark a row of a bulk write: open (decided by
+  the architecture owner in `docs/design/`); the templates use kebab-case types and
+  `errors[{field, code, message}]` provisionally.
+
+## Implementation
+
+Templates: `templates/GlobalProblemHandler.java` (package `app.lib.web.error`),
+`templates/ProblemException.java` (`ProblemException`, `NotFoundException`,
+`BusinessRuleException`). Compare `examples/bad-exception-handler.java`.
 
 ```yaml
 spring:
   mvc:
     problemdetails:
-      enabled: true
+      enabled: true      # Spring's own framework error handling, extended by the handler
 ```
 
-For WebFlux use `spring.webflux.problemdetails.enabled` and reactive exception handling;
-the servlet templates below are not WebFlux handlers.
+- The handler extends `ResponseEntityExceptionHandler`, so Spring keeps producing the framework
+  errors (unreadable JSON, type mismatch, 404/405); `createResponseEntity` gives them a
+  `/problems/<status>` type and a generic text.
+- Validation: `handleMethodArgumentNotValid` (body) and `handleHandlerMethodValidationException`
+  (path and query parameters) answer `422` with field errors; the code is the constraint name in
+  `UPPER_SNAKE_CASE` (`NotNull` → `NOT_NULL`).
+- Services throw a `ProblemException` subclass for every error the contract declares (not found,
+  business rule with its code). Domain records stay free of HTTP types.
+- `OptimisticLockingFailureException` → `409 /problems/stale-version`. A deadlock is retried once
+  around the transaction (`be-transactional-patterns`); if the retry fails too, it ends as `500`.
+- `DataIntegrityViolationException` → `409 /problems/integrity-violation`; the log gets only the
+  constraint name — the driver message can contain row values (`Key (…)=(…)`).
+- `AccessDeniedException` from `@PreAuthorize` is thrown inside the dispatcher: the handler maps it
+  to `403 /problems/access-denied`. Denials in the filter chain reach the same handler through the
+  `AccessDeniedHandler` of `lib-security`, which turns a person without access into
+  `NoAccessException` (a `ProblemException` with `reason`).
+- `401` never reaches the handler: the resource server answers it with an empty body.
+- The catch-all `Exception` handler logs once with the stack trace (`be-correlation-logging`) and
+  returns a generic `500`.
+- Every operation declares its error responses in the API model (`be-api-contract-first`).
 
-## Domain errors
-
-Use the compiled [DomainException](templates/DomainException.java) together with
-[ProblemDetailExceptionHandler](templates/ProblemDetailExceptionHandler.java).
-The handler maps all subclasses using their declared status and stable error code:
-
-- [OrderNotFoundException](templates/OrderNotFoundException.java): 404.
-- [InsufficientInventoryException](templates/InsufficientInventoryException.java): 422.
-- [BusinessRuleViolationException](templates/BusinessRuleViolationException.java): 422.
-
-Each public class has its own file. These are API-facing exceptions with HTTP status metadata;
-for a framework-free domain, keep domain exceptions independent and map them in the web adapter.
-Do not expose arbitrary persistence or infrastructure exception messages.
-
-The advice extends `ResponseEntityExceptionHandler` to preserve Spring's handling of framework
-exceptions. Validation returns 400 with field violations; unexpected failures return a generic
-500 while retaining the full exception only in server logs. Keep nullable validation messages safe.
-Filter-level authentication failures need an `AuthenticationEntryPoint`; authorization failures
-need an `AccessDeniedHandler`. Controller advice does not cover the security filter chain.
-Method-security (`@PreAuthorize`) denials are the opposite case: `AccessDeniedException` is thrown
-inside the dispatcher, so the advice must map it to 403 or the `Exception` catch-all returns 500.
-
-## Response fields
-
-```json
-{
-  "type": "https://api.example.com/errors/order_not_found",
-  "title": "Not Found",
-  "status": 404,
-  "detail": "Order not found",
-  "instance": "/api/orders/123",
-  "errorCode": "ORDER_NOT_FOUND"
-}
-```
-
-Use project-owned, stable URIs for custom problem types. An explicit `type` is optional;
-when omitted it defaults to `about:blank`. Its title should then match the HTTP status phrase.
-The HTTP status and the body status must agree. Use `application/problem+json` for JSON problems.
-Use extensions such as `errorCode` or `violations` for machine-readable details instead of
-requiring clients to parse human-readable messages.
+Not yet verified by a build in this repository (Spring Framework 7 signatures of the overridden
+methods).
 
 ## Verification
 
-Test actual HTTP responses for domain 404/422, validation 400, unexpected 500, and framework
-errors such as malformed JSON and unsupported methods. Assert content type, status, stable
-error codes and absence of stack traces or internal messages. Separately test filter 401/403.
-The repository verification fixture imports these exact templates for both Boot versions.
+Through the generated controller and the real handler (`*IT`, `be-testing-conventions`): for each
+operation its declared errors; `422` with `errors` for a missing required field and for a bad query
+parameter; `400` for malformed JSON and a wrong path-variable type, with no submitted value in the
+body; `403` both types; `409` business rule and stale version; `500` without stack trace or internal
+message; `Content-Type: application/problem+json` and the correlation header on every error;
+`401` with an empty body.
+
+## Gotchas
+
+- Agent answers validation errors with `400` — field errors are `422`; `400` only for unreadable input
+- Agent uses an absolute `type` (`https://…/errors/…`) or `about:blank` — `/problems/<code>`
+- Agent retries or answers `503` on a stale version — `409 /problems/stale-version`, no retry
+- Agent returns one generic `403` for a suspended person — `/problems/no-access` with `reason`
+- Agent writes a second `@RestControllerAdvice` or builds error bodies in a delegate — one handler in `lib-web`
+- Agent puts the submitted value, an ID or a search term into `detail` — fixed texts only
+- Agent logs `e.getMessage()` of an integrity violation — constraint name only
+- Agent relies on advice for filter exceptions — the security chain hands them over explicitly
+- Agent puts the handler into `lib-core` — `scheduler-service` has no web layer; it lives in `lib-web`
+- Agent returns internal exception messages in 500 responses — log privately and return generic detail
 
 ## Official sources
 
 - [RFC 9457](https://www.rfc-editor.org/rfc/rfc9457.html)
 - [Spring MVC error responses](https://docs.spring.io/spring-framework/reference/web/webmvc/mvc-ann-rest-exceptions.html)
 
-## Gotchas
+## Provenance
 
-- Agent handles a different exception class than the domain throws - test the concrete exceptions.
-- Agent forces Problem Details into an existing legacy API - preserve its contract unless asked to migrate.
-- Agent requires an explicit type for every error - about:blank is the default.
-- Agent treats success envelopes and Problem Details as incompatible - only error policy must be consistent.
-- Agent relies on advice for filter exceptions - configure the security handlers separately.
-- Agent returns internal exception messages in 500 responses - log privately and return generic detail.
+Adapted for this application's Java base (JDK 25, Spring Boot 4) and ADR-00007 point 9.
+Source: [rrezartprebreza/spring-boot-skills](https://github.com/rrezartprebreza/spring-boot-skills)
+(its Spring Boot 4 Problem Details skill), MIT License, © Rrezart Prebreza (see `LICENSE.txt`).
+Changes: statuses and types per ADR-00007 (422/400, two 403 types, two 409 types, relative
+`/problems/<code>`), handler in `lib-web`, safe texts, integrity violations; example domain
+exceptions replaced by `ProblemException`.

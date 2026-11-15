@@ -1,9 +1,9 @@
 ---
 name: be-transactional-patterns
 description: >
-  Use when defining or debugging Spring Boot 4 database transaction boundaries, rollback,
-  propagation, optimistic-lock retries with Spring Data JDBC, streaming reads inside a
-  transaction, or commit-bound events. For duplicate HTTP commands use idempotency-patterns.
+  Java/Spring backend: use when defining or debugging database transaction boundaries, rollback,
+  propagation, optimistic locking with Spring Data JDBC (version conflict -> 409, no retry), the
+  single deadlock retry, streaming reads inside a transaction, or commit-bound events.
 ---
 
 # Transactional Patterns
@@ -11,13 +11,15 @@ description: >
 ## Establish the boundary
 
 - Inspect the project's Boot/Framework version, transaction manager, rollback configuration
-  and caller before changing propagation. Persistence in the Elysium Java base is Spring Data
+  and caller before changing propagation. Persistence in this application is Spring Data
   JDBC (aggregate writes) plus `JdbcClient` (reads) on one `DataSourceTransactionManager`;
   there is no JPA persistence context, no lazy loading and no dirty checking — a change is
   written only when `save(...)` is called.
 - Place multi-step business transactions at the application/service boundary. Preserve
   Spring Data repository transactions; repository annotations are not inherently wrong.
 - Default propagation is `REQUIRED` — joins existing transaction or creates one
+- **One service operation (use case) = one transaction**; it may change several aggregates;
+  isolation stays PostgreSQL's `READ COMMITTED` (ADR-00008 point 14) — never set another level.
 - Use `readOnly = true` for appropriate read units of work. It is an optimization hint,
   not write prevention, authorization or automatic routing to a read replica.
 - Keep existing architecture and transaction-manager choices. A local database transaction
@@ -129,9 +131,9 @@ public Order createOrder(CreateOrderCommand command) throws InsufficientInventor
 ```
 
 Never use `noRollbackFor` or a `catch` inside the transaction to recover from an optimistic-lock
-conflict (`OptimisticLockingFailureException`): the data read in this transaction is stale. Roll it
-back and retry the whole unit of work in a fresh transaction, with a bounded policy and a fresh
-aggregate read.
+conflict (`OptimisticLockingFailureException`): the data read in this transaction is stale. Let it
+roll back and leave the service; the global handler answers `409 /problems/stale-version` and the
+user reloads (ADR-00007 point 10, ADR-00008 point 14). **A version conflict is never retried.**
 
 ## Optimistic Locking
 
@@ -162,11 +164,12 @@ entity, so the check compares against what this unit of work actually read.
 The whole aggregate (root + `@MappedCollection` children) is written and versioned together;
 changes to a child entity must go through the root and its `save(...)`.
 
-## Retrying Transient Failures
+## Retrying a Deadlock — once
 
-Retry support ships in core Spring Framework (`org.springframework.resilience.annotation`) — no
-Spring Retry dependency. Enable once with `@EnableResilientMethods`, then retry transient failures
-such as optimistic-lock conflicts:
+ADR-00008 point 14: a **deadlock** in the database is retried **once**, automatically, around the
+whole transaction; a **version conflict is not retried** (above). Retry support ships in core Spring
+Framework (`org.springframework.resilience.annotation`) — no Spring Retry dependency. Enable once
+with `@EnableResilientMethods`:
 
 ```java
 @Configuration
@@ -179,8 +182,9 @@ public class OrderStatusFacade {
 
     private final OrderService orderService; // separate bean — retry must wrap the TX
 
-    @Retryable(includes = OptimisticLockingFailureException.class,
-               maxRetries = 3, delay = 50, jitter = 25)
+    // PostgreSQL deadlock (SQLSTATE 40P01) is translated to a PessimisticLockingFailureException
+    // subclass; OptimisticLockingFailureException is NOT included and reaches the handler as 409.
+    @Retryable(includes = PessimisticLockingFailureException.class, maxRetries = 1, delay = 50)
     public Order updateStatus(Long id, OrderStatus newStatus) {
         return orderService.updateStatus(id, newStatus); // fresh @Transactional per attempt
     }
@@ -189,12 +193,10 @@ public class OrderStatusFacade {
 
 Put `@Retryable` on a method that *calls* the `@Transactional` method on another bean — each attempt
 needs a fresh transaction. Retrying inside the failed transaction re-runs code in a TX already marked
-rollback-only. For hot write paths, `@ConcurrencyLimit(10)` (same package) caps concurrent invocations
-instead of letting contention turn into retry storms.
-
-Use the [version-specific retry guidance](../be-resilience-retry/SKILL.md) for dependencies
-and annotation imports. A retrying facade must not already hold a transaction that each
-attempt's `REQUIRED` method would join.
+rollback-only. A retrying facade must not already hold a transaction that each attempt's `REQUIRED`
+method would join. Add a facade only for operations that can deadlock (several rows or aggregates
+locked in varying order); a deadlock that survives the retry ends as `500`.
+Not yet verified by a build in this repository (exception translation of 40P01 in Spring 7).
 
 ## Streaming Reads Need a Transaction
 
@@ -233,9 +235,9 @@ does not implement one.
 
 Do not save failure state and then throw a rollback-triggering exception from the same
 transaction: that erases the state. Recovery must resume from durable state after a crash.
-Use the project's existing workflow mechanism. The Elysium base has no message broker: durable
+Use the project's existing workflow mechanism. The application has no message broker: durable
 work and outgoing commands go through a job/outbox table in PostgreSQL, picked up with
-`FOR UPDATE SKIP LOCKED`; see [idempotency](../be-idempotency-patterns/SKILL.md) for duplicate effects.
+`FOR UPDATE SKIP LOCKED`; each step is idempotent so a repeated pickup has no duplicate effect.
 
 ## Side Effects After Commit
 
@@ -265,7 +267,7 @@ public void onOrderPlaced(OrderPlaced event) {
 transaction. Delegate database writes to a separate `REQUIRES_NEW` bean. Listener failure
 cannot undo the committed business write; make delivery failures observable and recoverable.
 Without an active transaction the listener is skipped by default. `@Async` does not add
-durable delivery. See [domain events](../be-domain-driven-design/SKILL.md).
+durable delivery.
 
 ## Verification
 
@@ -279,7 +281,9 @@ engine for isolation and contention tests. A test-wide rollback can hide after-c
 - Agent treats AFTER_COMMIT as durable messaging - use an outbox or persistent publication registry for required delivery.
 - Agent uses readOnly for replica routing or write protection - neither follows from the flag alone.
 - Agent commits success audit entries with REQUIRES_NEW - commit them with the business mutation.
-- Agent suppresses optimistic-lock rollback - retry in a fresh transaction.
+- Agent suppresses optimistic-lock rollback or retries it - let it roll back; the client gets `409`, no retry.
+- Agent retries a deadlock more than once or inside the failed transaction - one retry, from a separate bean, fresh transaction.
+- Agent sets `isolation = SERIALIZABLE` / `REPEATABLE_READ` - `READ COMMITTED` (ADR-00008 point 14).
 - Agent uses JPA idioms (`@Entity`, `EntityManager`, dirty checking, `ObjectOptimisticLockingFailureException`) - the base has no JPA; aggregates are written by Spring Data JDBC `save(...)` and conflicts raise `OptimisticLockingFailureException`.
 - Agent expects a modified aggregate to be written at commit without `save(...)` - Spring Data JDBC has no dirty checking.
 - Agent lets a `Stream` outlive its transaction or reads it without try-with-resources - the transaction must span the consumer; set a fetch size.
@@ -297,8 +301,9 @@ engine for isolation and contention tests. A test-wide rollback can hide after-c
 
 ## Provenance
 
-Adapted for the Elysium Java base (JDK 25, Spring Boot 4, Spring Data JDBC + `JdbcClient`, PostgreSQL 18).
+Adapted for this application's Java base (JDK 25, Spring Boot 4, Spring Data JDBC + `JdbcClient`, PostgreSQL 18).
 Source: [rrezartprebreza/spring-boot-skills](https://github.com/rrezartprebreza/spring-boot-skills),
 `skills/spring-boot-4/transactional-patterns`, MIT License, © Rrezart Prebreza.
 Changes: optimistic locking with Spring Data JDBC instead of JPA/Hibernate, streaming reads inside a
-transaction, outbox in PostgreSQL instead of a broker, `Long` IDs.
+transaction, outbox in PostgreSQL instead of a broker, `Long` IDs; version conflict -> `409` without
+retry and one deadlock retry (ADR-00008 point 14).
