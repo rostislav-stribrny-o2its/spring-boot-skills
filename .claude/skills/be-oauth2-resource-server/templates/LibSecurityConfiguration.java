@@ -28,8 +28,8 @@ import org.springframework.web.servlet.HandlerExceptionResolver;
  * {@code @Import(LibSecurityConfiguration.class)}; it brings lib-web (global problem handler,
  * correlation filter) and through it lib-core. Not yet verified by a build in this repository.
  *
- * Configured for pattern (a) default (application-roles via ApplicationAccess, ADR-00004 point 3);
- * in pattern (b) token-roles, ApplicationAccess is omitted when chosen by the app's identity ADR.
+ * Configured for pattern (a) default (application-roles via ApplicationAccess, ADR-STACK-00002 point 3);
+ * in pattern (b) token-roles, ApplicationAccess is omitted when the application chooses it in its own ADR.
  *
  * Token validation (issuer, JWKS, RS256, audience) is Spring Boot's auto-configured JwtDecoder,
  * driven by spring.security.oauth2.resourceserver.jwt.* (see application-security.yaml);
@@ -45,7 +45,7 @@ public class LibSecurityConfiguration {
 
     /**
      * The status endpoint path comes from app.security.me-path (example: /api/users/me) and must
-     * equal the path in the API contract (ADR-00006); otherwise the /api/** rule catches it and every new
+     * equal the path in the API contract (ADR-STACK-00003); otherwise the /api/** rule catches it and every new
      * user gets 403. The IT "paired user with ENTRY only -> 200 on the status endpoint" guards it.
      */
     @Bean
@@ -91,7 +91,8 @@ public class LibSecurityConfiguration {
 
     /**
      * One place decides the 403 body: the global problem handler of lib-web (be-problem-details-rfc9457).
-     * A person without access (unpaired, no role, suspended) gets /problems/no-access with reason.
+     * A person refused access (unpaired or no role, states of the mechanism; or an entry ban for one of
+     * the application's reasons, example: suspended) gets /problems/no-access with reason.
      */
     @Bean
     AccessDeniedHandler problemAccessDeniedHandler(

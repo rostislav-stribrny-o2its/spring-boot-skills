@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<!-- Template: backend/api-spec/pom.xml - the small app that exports the spec at build (ADR-00006, point 2).
+<!-- Template: backend/api-spec/pom.xml - the small app that exports the spec at build (ADR-STACK-00003, point 2).
      validate: reserve two free ephemeral ports; pre-integration-test: start the app;
      integration-test: fetch each spec group and write it to specs/; post-integration-test: stop.
      One springdoc execution per spec file. As in the stack's reference implementation. -->

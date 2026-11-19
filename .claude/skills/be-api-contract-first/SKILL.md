@@ -9,7 +9,7 @@ description: >
 
 # API Contract-First
 
-The contract is the only meeting point of frontend and backend (ADR-00006). Nobody - human or
+The contract is the only meeting point of frontend and backend (ADR-STACK-00003). Nobody - human or
 AI - writes the OpenAPI document or the generated code. **You write the typed API model in Java;
 the build exports the spec; both sides generate code from the committed spec.**
 
@@ -31,7 +31,7 @@ backend-service: generated ...Api,               frontend: generated TypeScript 
 ```
 
 **The backend implements the generated delegate interfaces, never the model interfaces**
-(ADR-00006): the spec is the contract and both sides read it the same way.
+(ADR-STACK-00003): the spec is the contract and both sides read it the same way.
 
 ## 1. What you may touch
 
@@ -43,7 +43,7 @@ backend-service: generated ...Api,               frontend: generated TypeScript 
 | `backend-service/target/generated-sources/**` | the generator only - never edit, never commit |
 | `backend/openapi-generator.json`, `backend/openapi-templates-customization/**`, `backend/openapi-templates-original/**` | controlled template change only ([template-customizations.md](template-customizations.md)), never as part of a feature change |
 
-An API change follows the "API change" steps (ADR-00006, point 8): description -> model ->
+An API change follows the "API change" steps (ADR-STACK-00003, point 8): description -> model ->
 regenerated spec -> backend (and later frontend) compile again. Agreement between code and
 description is confirmed by the reviewer of the change, never by a tool comparing spec and
 description. The full file list for adding a field (description, model, spec, migration, domain,
@@ -62,7 +62,7 @@ request text until the folder is created.
 - Every endpoint interface carries `@ApiSpec(area = "main", visibility = PUBLIC, module = "backend")`
   - it decides which spec file the operations land in: `area` = an area name from the list in
   `docs/design/backend/` ("main" is the example used throughout this skill), `visibility` =
-  who may call it (ADR-00006 point 3: `PUBLIC` = public interface, `SERVER` = reachable inside the
+  who may call it (ADR-STACK-00003 point 3: `PUBLIC` = public interface, `SERVER` = reachable inside the
   internal infrastructure, `INTERNAL` = within one application only; *example:* an application
   whose only API is the main backend's uses `PUBLIC` alone), `module` = the application without
   `-service`. Templates: `templates/ApiSpec.java` (annotation, exception, example interface).
@@ -70,11 +70,11 @@ request text until the folder is created.
   it becomes the generated method name. `@Tag` groups operations into one generated interface.
 - Names in the contract are English; JSON fields `camelCase`; paths under `/api/`, plural nouns,
   `kebab-case`, nesting at most two levels; codes of enums, reasons and errors `UPPER_SNAKE_CASE`
-  (ADR-00007, point 7). **No version segment in paths** (ADR-00007, point 12): `/api/users/me`.
-- No marker extensions for traceability (`x-des-id` and similar are rejected, ADR-00006). Any `x-`
+  (ADR-STACK-00004, point 7). **No version segment in paths** (ADR-STACK-00004, point 12): `/api/users/me`.
+- No marker extensions for traceability (`x-des-id` and similar are rejected, ADR-STACK-00003). Any `x-`
   extension only from the approved list in `docs/design/`.
 
-### Types (ADR-00007, points 1-5, 8)
+### Types (ADR-STACK-00004, points 1-5, 8)
 
 | Value (by its range in the data model) | Java in the model | OpenAPI | Generated Java |
 |---|---|---|---|
@@ -85,7 +85,7 @@ request text until the folder is created.
 | date | `LocalDate` | `string`, `date` (`YYYY-MM-DD`) | `LocalDate` |
 | instant | `Instant` | `string`, `date-time` (UTC, `Z`) | `OffsetDateTime` (`Instant` <-> `OffsetDateTime` in `CommonMappings`, `be-mapstruct-dto-layers`) |
 
-- **Numbers are never strings**, IDs are numbers. No `typeMappings`/custom number mappings in the
+- **Numbers are never strings**, IDs are numbers. No `typeMappings` or custom number mappings in the
   generator. `float` nowhere. The month `YYYY-MM` encoding is open (decided by the architecture
   owner in `docs/design/`) - ask, do not guess.
 - Required fields are `required`; a field the model allows empty is `nullable: true` and carries
@@ -100,17 +100,17 @@ request text until the folder is created.
   removing or renaming is breaking. Classify every value set (*fixed enum* / *managed lookup table*
   / *constrained free text*) and keep its values, and every length or range limit, equal in the DB,
   the `api-model`, the domain and the frontend translations.
-- Polymorphism (type hierarchies, unions): open (decided by the architecture owner, ADR-00007) - do
-  not introduce it without that decision.
+- Polymorphism (type hierarchies, unions): open — to be decided in a separate ADR (ADR-STACK-00004,
+  section on what it does not decide); do not introduce it without that decision.
 
-### Errors, concurrency, lists (ADR-00007, points 9-11)
+### Errors, concurrency, lists (ADR-STACK-00004, points 9-11)
 
 - Errors are `application/problem+json` (RFC 9457), `type` = `/problems/<code>`; `401` has an
   empty body. Every operation declares its error responses in the model. Mechanics:
   `be-problem-details-rfc9457`.
 - `422` invalid input with a list of field errors (field, code, text); `400` unreadable body or
   wrong parameter type; `403` in two distinct types: `/problems/no-access` with `reason`
-  (*example reasons:* `UNPAIRED`, `NO_ROLE`, `SUSPENDED`) when the person has no access to the application, and
+  (`UNPAIRED`, `NO_ROLE`, or an entry-ban reason of the application, *example:* `SUSPENDED`) when the person has no access to the application, and
   `/problems/access-denied` for a missing permission to an operation or record; `404` not found;
   `409` business rule violation **or** stale record version (distinct types). Error texts never
   repeat submitted values. No `423`, no `429`.
@@ -128,7 +128,7 @@ request text until the folder is created.
 ## 3. Exporting the spec (`api-spec`)
 
 The spec is generated at build by **starting a small application that contains only the API
-model** and reading the documents from springdoc (ADR-00006, point 2). Templates:
+model** and reading the documents from springdoc (ADR-STACK-00003, point 2). Templates:
 `templates/api-spec-pom.xml`, `templates/SpecExportConfiguration.java`,
 `templates/ApiSpecApplication.java` (main class and a stub controller).
 
@@ -168,9 +168,9 @@ with Spring Boot 4.1, dynamic ports).
 
 ## 4. Generating the backend code (`backend-service`)
 
-openapi-generator `spring` (ADR-00002, point 5) with the **delegate pattern** - the generator mode
+openapi-generator `spring` (ADR-STACK-00001, point 5) with the **delegate pattern** - the generator mode
 this skill set uses; the ADRs fix only the generator and that its configuration and templates
-change under control (ADR-00006, point 6). Configuration: `backend/openapi-generator.json`
+change under control (ADR-STACK-00003, point 6). Configuration: `backend/openapi-generator.json`
 (`templates/openapi-generator.json`), version and plugin settings in the parent POM, executions in
 `backend-service` (`templates/backend-service-openapi-fragment.xml`).
 
@@ -184,13 +184,13 @@ change under control (ADR-00006, point 6). Configuration: `backend/openapi-gener
 | `openApiNullable` | `false` | nullability by `nullable: true`, no `JsonNullable` |
 | `modelNameSuffix` | `Dto` | `ProjectDto` never clashes with the domain `Project` |
 | `hideGenerationTimestamp` | `true` | deterministic output |
-| `skipValidateSpec` | `false` | spec validation is never switched off (ADR-00006) |
+| `skipValidateSpec` | `false` | spec validation is never switched off (ADR-STACK-00003) |
 | supporting files | `ApiUtil.java` only | full supporting files add a second `@SpringBootApplication` |
 | `templateDirectory` | `backend/openapi-templates-customization/JavaSpring` | [template-customizations.md](template-customizations.md) |
 
 - Generated packages: `app.backend.api.generated.<area>` (+ `.model`), sources in
-  `target/generated-sources/`; never committed (ADR-00006, point 5).
-- Tolerating unknown enum values on input (ADR-00007, point 6) needs a generator setting: open
+  `backend/backend-service/target/generated-sources/`; never committed (ADR-STACK-00003, point 5).
+- Tolerating unknown enum values on input (ADR-STACK-00004, point 6) needs a generator setting: open
   (decided by the architecture owner in `docs/design/`); until then do not add one on your own.
 
 ## 5. Implementing the delegate
@@ -225,7 +225,7 @@ public class UsersApiDelegateImpl implements UsersApiDelegate {
 }
 ```
 
-- The `...Impl` name is allowed because the interface is generated (ADR-00002, point 7: a service
+- The `...Impl` name is allowed because the interface is generated (ADR-STACK-00001, point 7: a service
   interface exists only when a tool generates it, at a module or external-system boundary, or when
   there are several implementations; otherwise a concrete class).
 - Every public delegate method carries `@PreAuthorize` with a role constant
@@ -270,4 +270,4 @@ OpenAPI 3.0.3 -> generated code). Generator settings and the delegate pattern de
 [rrezartprebreza/spring-boot-skills](https://github.com/rrezartprebreza/spring-boot-skills)
 (`skills/spring-boot-4/openapi-first`, `rest-api-conventions`), MIT License, (c) Rrezart Prebreza.
 The export by a started model application, the type customizers and the template customizations
-follow ADR-00006.
+follow ADR-STACK-00003.

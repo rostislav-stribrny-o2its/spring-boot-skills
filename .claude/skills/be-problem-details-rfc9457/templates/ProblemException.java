@@ -54,7 +54,7 @@ package app.lib.web.error;
 import org.springframework.http.HttpStatus;
 
 /**
- * 409 for a violated business rule (ADR-00007 point 9). Each rule has its own code, listed in the
+ * 409 for a violated business rule (ADR-STACK-00004 point 9). Each rule has its own code, listed in the
  * contract description of its area; the stale-version 409 has the separate type /problems/stale-version.
  */
 public class BusinessRuleException extends ProblemException {

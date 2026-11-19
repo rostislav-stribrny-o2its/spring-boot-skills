@@ -23,13 +23,13 @@ import org.springframework.web.method.annotation.HandlerMethodValidationExceptio
 import org.springframework.web.servlet.mvc.method.annotation.ResponseEntityExceptionHandler;
 
 /**
- * The one global error handler of backend-service (lib-web, ADR-00007 point 9). Not yet verified
+ * The one global error handler of backend-service (lib-web, ADR-STACK-00004 point 9). Not yet verified
  * by a build in this repository.
  *
  * - every error body is application/problem+json with type /problems/<code>;
  * - 422 invalid input with "errors" [{field, code, message}]; 400 unreadable body / wrong parameter type;
  * - 403 /problems/no-access (+reason, NoAccessException of lib-security) or /problems/access-denied;
- * - 409 business rule (its own code) or /problems/stale-version (no retry, ADR-00008 point 14);
+ * - 409 business rule (its own code) or /problems/stale-version (no retry, ADR-STACK-00005 point 14);
  * - texts never repeat submitted values; the driver message of an integrity violation is never
  *   returned or logged (it can carry row values), only the constraint name is logged;
  * - 401 is not produced here: the security chain answers it with an empty body.
@@ -124,7 +124,7 @@ public class GlobalProblemHandler extends ResponseEntityExceptionHandler {
         return problem;
     }
 
-    /** "NotNull" -> "NOT_NULL" (ADR-00007 point 7: codes in UPPER_SNAKE_CASE). */
+    /** "NotNull" -> "NOT_NULL" (ADR-STACK-00004 point 7: codes in UPPER_SNAKE_CASE). */
     static String code(@Nullable String constraint) {
         return constraint == null ? "INVALID"
             : constraint.replaceAll("([a-z0-9])([A-Z])", "$1_$2").toUpperCase(Locale.ROOT);

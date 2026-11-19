@@ -18,5 +18,5 @@ public record AppSecurityProperties(
         @NotBlank String principalClaim,  // claim identifying the person (example: personal_number)
         @NotBlank String entryRole,       // Keycloak role that admits a user (example: app-user)
         String roleClientId,              // client whose client roles are read; null = realm roles only
-        @DefaultValue("/api/users/me") @NotBlank String mePath) {  // status endpoint = the contract's path (ADR-00006; example: /api/users/me)
+        @DefaultValue("/api/users/me") @NotBlank String mePath) {  // status endpoint = the contract's path (ADR-STACK-00003; example: /api/users/me)
 }

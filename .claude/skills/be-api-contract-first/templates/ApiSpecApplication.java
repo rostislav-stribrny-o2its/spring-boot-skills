@@ -8,7 +8,7 @@ package app.apispec;
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
 
-/** Started only at build time to export the spec (ADR-00006, point 2). No database, no libraries. */
+/** Started only at build time to export the spec (ADR-STACK-00003, point 2). No database, no libraries. */
 @SpringBootApplication
 public class ApiSpecApplication {
     public static void main(String[] args) {

@@ -13,7 +13,7 @@ import java.lang.annotation.Target;
 
 /**
  * Puts the operations of one endpoint interface into one spec file:
- * specs/<app>/openapi/<visibility>/<area>/<module>-service-<visibility>.json (ADR-00006, point 3).
+ * specs/<app>/openapi/<visibility>/<area>/<module>-service-<visibility>.json (ADR-STACK-00003, point 3).
  */
 @Documented
 @Retention(RetentionPolicy.RUNTIME)   // springdoc reads it at export time
@@ -23,7 +23,7 @@ public @interface ApiSpec {
     /** API area: a folder name from the list of areas in docs/design/backend/ (e.g. "main"). */
     String area();
 
-    /** Who may call the interface; phase 1 uses PUBLIC only. */
+    /** Who may call the interface (example: an application may start with PUBLIC only). */
     Visibility visibility();
 
     /** Application without its "-service" suffix: "backend". */
@@ -55,7 +55,7 @@ import org.springframework.web.bind.annotation.RequestMapping;
 
 @ApiSpec(area = "main", visibility = Visibility.PUBLIC, module = "backend")
 @Tag(name = "Users")                       // one tag = one generated UsersApi / UsersApiDelegate
-@RequestMapping("/api/users")             // no version segment (ADR-00007, point 12)
+@RequestMapping("/api/users")             // no version segment (ADR-STACK-00004, point 12)
 public interface UsersEndpoint {
 
     @Operation(operationId = "getMe", summary = "Identity, roles and permissions of the caller")

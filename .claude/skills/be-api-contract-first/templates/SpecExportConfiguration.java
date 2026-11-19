@@ -19,7 +19,7 @@ import org.springframework.context.annotation.Configuration;
 /**
  * Template (api-spec): spec groups and type customizers of the export app.
  *
- * <p>The customizers make springdoc write the standard types of ADR-00007, which the generators
+ * <p>The customizers make springdoc write the standard types of ADR-STACK-00004, which the generators
  * map by default: Long -> integer/int64 with maximum 2^53-1; BigDecimal, BigInteger ->
  * number/decimal. They apply to properties, parameters and collection items alike.
  * swagger-core resolves types with its own (Jackson 2) mapper, hence {@code Json.mapper()}:

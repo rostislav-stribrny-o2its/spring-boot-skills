@@ -1,7 +1,7 @@
 <!-- Fragment for backend/backend-service/pom.xml <build><plugins>: generate Java from the committed spec.
      Version, configurationFile (openapi-generator.json), templateDirectory and skipValidateSpec=false
      come from the parent's pluginManagement. One execution per spec file (area).
-     Generated code lands in target/ and is never committed (ADR-00006, point 5).
+     Generated code lands in target/ and is never committed (ADR-STACK-00003, point 5).
      Area "main" is an example: one execution per area listed in docs/design/backend/.
      Not yet verified by a build in this repository. -->
 <plugin>

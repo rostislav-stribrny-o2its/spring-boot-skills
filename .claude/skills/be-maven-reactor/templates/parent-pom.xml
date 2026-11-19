@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<!-- Template: backend/pom.xml - parent POM and reactor root (ADR-00002, point 2).
+<!-- Template: backend/pom.xml - parent POM and reactor root (ADR-STACK-00001, point 2).
      Literal versions below are those of the stack's reference implementation. The repository's
      existing backend/pom.xml always wins; use these only for entries it does not have yet.
      The reference backend/pom.xml additionally carries the JaCoCo unit-coverage check
@@ -79,7 +79,7 @@
             <dependency><groupId>app</groupId><artifactId>lib-security</artifactId><version>${project.version}</version></dependency>
             <dependency><groupId>app</groupId><artifactId>integration-contract</artifactId><version>${project.version}</version></dependency>
 
-            <!-- Third party, not in the Boot BOM (mssql-jdbc, Flyway, Testcontainers modules are in it) -->
+            <!-- Third party, not in the Boot BOM (source JDBC drivers such as the example mssql-jdbc, Flyway, Testcontainers modules are in it) -->
             <dependency><groupId>org.springdoc</groupId><artifactId>springdoc-openapi-starter-webmvc-api</artifactId><version>${springdoc.version}</version></dependency>
             <dependency><groupId>io.swagger.core.v3</groupId><artifactId>swagger-annotations-jakarta</artifactId><version>${swagger.version}</version></dependency>
             <dependency><groupId>org.mapstruct</groupId><artifactId>mapstruct</artifactId><version>${mapstruct.version}</version></dependency>
@@ -163,7 +163,7 @@
                                 <requireMavenVersion><version>[3.9,)</version></requireMavenVersion>
                                 <bannedDependencies>
                                     <excludes>
-                                        <!-- ADR-00002: Spring Data JDBC, not JPA -->
+                                        <!-- ADR-STACK-00001: Spring Data JDBC, not JPA -->
                                         <exclude>jakarta.persistence:*</exclude>
                                         <exclude>org.hibernate.orm:*</exclude>
                                         <exclude>org.springframework.boot:spring-boot-starter-data-jpa</exclude>
@@ -255,7 +255,7 @@
     </build>
 
     <profiles>
-        <!-- Offline SAST (ADR-00009 points 2, 6): -Psast or SAST_ENABLED=true (CI sets it). -->
+        <!-- Offline SAST (ADR-STACK-00006 points 2, 6): -Psast or SAST_ENABLED=true (CI sets it). -->
         <profile>
             <id>sast</id>
             <activation>
@@ -293,7 +293,7 @@
             </build>
         </profile>
 
-        <!-- Offline SCA / SBOM (ADR-00009 points 2, 7): -Psca or SCA_ENABLED=true (CI sets it). -->
+        <!-- Offline SCA / SBOM (ADR-STACK-00006 points 2, 7): -Psca or SCA_ENABLED=true (CI sets it). -->
         <profile>
             <id>sca</id>
             <activation>
