@@ -3,8 +3,8 @@ name: be-maven-reactor
 description: >
   Java/Spring backend: use when creating or changing the Maven build in backend/ - the reactor and
   parent POM (JDK 25, Spring Boot 4, versions in one place), modules api-model, api-spec, lib-core,
-  lib-db, lib-web, lib-security, backend-service, optional scheduler-service and integration-contract
-  (for apps with source systems), what lives in which library, composition via @Import, annotation
+  lib-db, lib-web, lib-security, backend-service and scheduler-service (the timer sample), what lives
+  in which library, composition via @Import, annotation
   processors, Boot 4 starters and what ./mvnw verify runs.
 ---
 
@@ -39,14 +39,12 @@ backend/                          reactor root: pom.xml (packaging pom), .mvn/, 
 ├── lib-db/                       app.lib.db       - JdbcClient helpers (row mappers, pages)
 ├── lib-web/                      app.lib.web      - servlet pieces: correlation filter, global problem handler
 ├── lib-security/                 app.lib.security - resource server, roles (imports lib-web)
-├── integration-contract/         (optional) plain Java row types + enums of the tables both applications share; no Spring
 ├── backend-service/              application: REST API (generated from the spec), business logic, its jobs
-└── scheduler-service/            (optional) application: reads source systems on a schedule into schema integration; no public API
+└── scheduler-service/            application: the timer sample (`@Scheduled` + ShedLock); no public API
 ```
 
-- `integration-contract` and `scheduler-service` (and schema `integration`) are **optional** — they exist
-  only in applications that integrate external source systems (ADR-STACK-00001 point 2, ADR-STACK-00007 point 2). An application without
-  source systems omits both modules and has only `backend-service`.
+- `scheduler-service` is the timer sample the template ships (ADR-STACK-00001 point 2, ADR-STACK-00007 point 2).
+  An application that needs no extra timer executable deletes the module and has only `backend-service`.
 - Templates: `templates/parent-pom.xml`, `templates/lib-module-pom.xml`,
   `templates/app-module-pom.xml`. Copy, then adapt; keep the structure.
 - Add a library only when two applications need the same code, or when a cross-cutting concern
@@ -66,9 +64,8 @@ backend/                          reactor root: pom.xml (packaging pom), .mvn/, 
 | `lib-web` | `CorrelationIdFilter` (`be-correlation-logging`), `GlobalProblemHandler`, `ProblemException` (`be-problem-details-rfc9457`) | `backend-service` only (via `lib-security`) |
 | `lib-security` | `LibSecurityConfiguration`, converter, `Roles` (`be-oauth2-resource-server`) | `backend-service` only |
 
-Where present, `scheduler-service` imports `lib-core` and `lib-db`, never `lib-web` or `lib-security`;
-it needs no Spring MVC. In an application without source systems, `scheduler-service` and
-`integration-contract` are omitted entirely (ADR-STACK-00001 point 2, ADR-STACK-00007 point 2).
+`scheduler-service` imports `lib-core` and `lib-db`, never `lib-web` or `lib-security`;
+it needs no Spring MVC (ADR-STACK-00001 point 2, ADR-STACK-00007 point 2).
 
 ## 2. Module roles and dependency rules
 
@@ -78,10 +75,9 @@ it needs no Spring MVC. In an application without source systems, `scheduler-ser
 | `api-spec` | `api-model`, `spring-boot-starter-webmvc`, springdoc (`…-webmvc-api`) | `lib-*`, applications, database drivers |
 | `lib-core`, `lib-db` | lower `lib-*`, Boot starters without web | `api-model`, `api-spec`, applications, `spring-boot-starter-webmvc` |
 | `lib-web`, `lib-security` | `lib-core`, `lib-web` (for `lib-security`), `spring-boot-starter-webmvc`, the starters they need | `api-model`, `api-spec`, applications |
-| a new `lib-<topic>` | `lib-core` always; `lib-db` if it uses JDBC; `lib-web` only if it needs servlet types (then it is web, and `scheduler-service` (if present) cannot import it) | `api-model`, `api-spec`, applications, `integration-contract` |
-| `integration-contract` (optional) | JDK only | Spring, `lib-*`, applications |
-| `backend-service` | `lib-*`, optional `integration-contract`; `api-spec` only as a **build-order** dependency (below) | `api-model` at compile scope, `scheduler-service` |
-| `scheduler-service` (optional) | `lib-core`, `lib-db`, `integration-contract` | `lib-web`, `lib-security`, `api-model`, `api-spec`, `backend-service` |
+| a new `lib-<topic>` | `lib-core` always; `lib-db` if it uses JDBC; `lib-web` only if it needs servlet types (then it is web, and `scheduler-service` cannot import it) | `api-model`, `api-spec`, applications |
+| `backend-service` | `lib-*`; `api-spec` only as a **build-order** dependency (below) | `api-model` at compile scope, `scheduler-service` |
+| `scheduler-service` | `lib-core`, `lib-db` | `lib-web`, `lib-security`, `api-model`, `api-spec`, `backend-service` |
 
 - **No application depends on another application.** Shared code goes to a `lib-*` module.
 - **The backend implements code generated from the committed spec, never the model interfaces**
@@ -93,10 +89,8 @@ it needs no Spring MVC. In an application without source systems, `scheduler-ser
 - Libraries are versioned with the reactor (`${project.version}` in the parent's
   `dependencyManagement`); third-party versions come from the Spring Boot BOM, or are pinned in the
   parent when Boot does not manage them.
-- `integration-contract` keeps its ADR name; it holds only `...Row` records and enums of the
-  shared tables, has no `@Configuration` and no Spring dependency (details: be-scheduler-service).
 - **Adding a `lib-<topic>`:** `<module>` after the libraries it depends on and before
-  `integration-contract` and the applications; a `dependencyManagement` entry
+  the applications; a `dependencyManagement` entry
   `app:lib-<topic>:${project.version}`; a row in "What lives where"; its package in the
   library rules of `be-archunit-rules` (and in the web-free rule if it is web-free).
 
@@ -107,9 +101,8 @@ it needs no Spring MVC. In an application without source systems, `scheduler-ser
 | API model | `app.api..` |
 | spec export app | `app.apispec..` |
 | shared library | `app.lib.<topic>..` |
-| integration table contract (optional) | `app.integration.contract..` |
 | backend application | `app.backend..` (main class `app.backend.BackendServiceApplication`) |
-| scheduler application (optional) | `app.scheduler..` (main class `app.scheduler.SchedulerServiceApplication`) |
+| scheduler application | `app.scheduler..` (main class `app.scheduler.SchedulerServiceApplication`) |
 | code generated from the spec | `app.backend.api.generated.<area>..` (in `target/`, never committed) |
 
 **Never put a main class directly in `app`.** `@SpringBootApplication` scans its own package
@@ -145,7 +138,7 @@ public class BackendServiceApplication {
 }
 ```
 
-When `scheduler-service` is present, `SchedulerServiceApplication` imports `LibDbConfiguration` (and through it `LibCoreConfiguration`).
+`SchedulerServiceApplication` imports `LibDbConfiguration` (and through it `LibCoreConfiguration`).
 
 - Importing an upper library brings the lower ones with it; importing one twice is harmless.
 - **Properties:** one prefix `app.` for every property of our own: libraries `app.<topic>.*`,
@@ -160,9 +153,9 @@ When `scheduler-service` is present, `SchedulerServiceApplication` imports `LibD
 
 ## 5. Applications: the module decides the role
 
-- `backend-service` and (when source systems are integrated, ADR-STACK-00001 point 2, ADR-STACK-00007 point 2) `scheduler-service`
+- `backend-service` and `scheduler-service` (the timer sample, ADR-STACK-00001 point 2, ADR-STACK-00007 point 2)
   are separate runnable modules, each with its own `spring-boot-maven-plugin` and container image.
-  An application without source systems omits `scheduler-service`. **What an application does is
+  An application that needs no extra timer executable deletes `scheduler-service`. **What an application does is
   decided by its module, not by a Spring profile or a property** (ADR-STACK-00001 point 2).
 - Spring profiles exist **only for environment behaviour**. A profile or property that switches a
   role on or off is a finding.
@@ -239,8 +232,8 @@ Order **Lombok -> `lombok-mapstruct-binding` -> MapStruct** in the parent's `mav
 ## 9. What `./mvnw -B -ntp verify` does, in order
 
 `api-model` (compile, ArchUnit over the model) → `api-spec` (start, export `specs/…`, stop) →
-`lib-*`, optional `integration-contract` → `backend-service` (generate from the just re-exported spec,
-compile, tests, ArchUnit, ITs) → optional `scheduler-service` → JaCoCo reports; CI then checks
+`lib-*` → `backend-service` (generate from the just re-exported spec,
+compile, tests, ArchUnit, ITs) → `scheduler-service` → JaCoCo reports; CI then checks
 `git diff --exit-code -- specs/` and runs the spec guards. That is the dependency order; the build
 runs in parallel (`-T1C` in `backend/.mvn/maven.config`), so `lib-*` build beside `api-spec` and
 `scheduler-service` beside `backend-service`, each module after everything it depends on.

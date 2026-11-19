@@ -44,7 +44,7 @@ builds error bodies.
 ## Implementation
 
 Templates: `templates/GlobalProblemHandler.java` (package `app.lib.web.error`),
-`templates/ProblemException.java` (`ProblemException`, `NotFoundException`,
+`templates/ProblemException.java` (`ProblemKind`, `ProblemException`, `NotFoundException`,
 `BusinessRuleException`). Compare `examples/bad-exception-handler.java`.
 
 ```yaml
@@ -61,7 +61,9 @@ spring:
   (path and query parameters) answer `422` with field errors; the code is the constraint name in
   `UPPER_SNAKE_CASE` (`NotNull` → `NOT_NULL`).
 - Services throw a `ProblemException` subclass for every error the contract declares (not found,
-  business rule with its code). Domain records stay free of HTTP types.
+  business rule with its code). The exceptions name a `ProblemKind`, never an HTTP status: only the
+  handler maps the kind to 404/409/403 and validation to 422/400, and a service imports nothing of
+  `org.springframework.http`. Domain records stay free of HTTP types.
 - `OptimisticLockingFailureException` → `409 /problems/stale-version`. A deadlock is retried once
   around the transaction (`be-transactional-patterns`); if the retry fails too, it ends as `500`.
 - `DataIntegrityViolationException` → `409 /problems/integrity-violation`; the log gets only the

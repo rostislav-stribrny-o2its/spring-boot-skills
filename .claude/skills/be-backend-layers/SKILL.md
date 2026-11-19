@@ -32,9 +32,9 @@ PostgreSQL 18             ← schema from Flyway only; integrity constraints, no
 ## Applications and libraries
 
 - **`backend-service`** — the REST API for the frontend, all business logic, its own scheduled jobs.
-- **`scheduler-service`** (optional, present only in applications that read source systems, ADR-STACK-00001 point 2, ADR-STACK-00007 point 2) —
-  reads source systems into the `integration` schema; no domain model, no layers of this skill (see
-  `be-scheduler-service`). Applications without source systems omit `scheduler-service` and schema `integration`.
+- **`scheduler-service`** (the template's sample of a timer, ADR-STACK-00001 point 2, ADR-STACK-00007 point 2) —
+  no domain model, no layers of this skill (see `be-scheduler-service`). Applications that need no extra
+  timer executable may drop it.
 - **Role is decided by the Maven module, never by a Spring profile.** Profiles only select
   environment behaviour (LOCAL, DEV, TEST, PROD). A profile that switches a role's classes on or
   off is a review finding (ADR-STACK-00001 point 2).
@@ -65,8 +65,7 @@ app.lib.<topic>..                             shared library code (one entry @Co
 A module is a package of code, not a database schema: the backend has one schema
 (ADR-STACK-00005 point 12; migrations run as the schema owner, the application at runtime under a role
 that may not change the schema). SQL and `@Table` names of that schema are unqualified (the connection's
-`search_path` is the backend schema); tables of schema `integration` (optional, present only when
-source systems are integrated) are always qualified (`db-flyway-migrations`).
+`search_path` is the backend schema).
 
 ## Three object layers (ADR-STACK-00005 point 6)
 
@@ -163,7 +162,7 @@ domain records; returns the saved copy (it carries the new `id` / `version`). Ag
 parameters, fixed SQL fragments, `…Row` results, pages of at most 500 rows, streams only for
 export and batches (ADR-STACK-00005 point 7): `be-jdbc-client-reads`.
 
-Technical tables of `backend-service` (job queue, optional integration control tables when source systems are integrated, audit) use SQL via
+Technical tables of `backend-service` (job queue, audit) use SQL via
 `JdbcClient` without domain model or aggregates; a bulk write from domain objects may use batched
 SQL (ADR-STACK-00005 point 4).
 
