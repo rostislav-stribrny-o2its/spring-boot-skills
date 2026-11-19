@@ -50,7 +50,7 @@ overrides this skill on the same point.
     developer starts without `.env`. Never a default that points at a shared environment.
 - Lives in **`lib-security`** (package `app.lib.security`) with ONE entry configuration
   `LibSecurityConfiguration`, which imports `lib-web` (global problem handler, correlation filter;
-  `NoAccessException` extends `lib-web`'s `ProblemException(HttpStatus, String code, String detail)`,
+  `NoAccessException` extends `lib-web`'s `ProblemException(ProblemKind, String code, String detail)`,
   template in `be-problem-details-rfc9457`). Only `backend-service` composes it, by explicit
   `@Import` (`be-maven-reactor`). No auto-configuration of our own. If `lib-web` does not exist yet,
   create it first (`be-maven-reactor`, `be-problem-details-rfc9457`).

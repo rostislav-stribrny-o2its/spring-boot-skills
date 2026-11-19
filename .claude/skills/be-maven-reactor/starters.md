@@ -15,10 +15,9 @@ POM pins them.
 | tracing (trace ID in MDC, `traceparent`) | `spring-boot-starter-opentelemetry` | both applications; `lib-web` needs only `io.micrometer:micrometer-tracing` (API) |
 | `@Observed` on chosen methods | `spring-boot-starter-aspectj` (not `-aop`) | where used |
 | PostgreSQL driver | `org.postgresql:postgresql` (`runtime`; compile scope in `lib-web` for the constraint name) | applications, `lib-web` |
-| source database driver (source views) | the JDBC driver of the application's source database (`runtime`); the source driver is the application's choice (example: `com.microsoft.sqlserver:mssql-jdbc` for MS SQL) | `scheduler-service` only |
 | ShedLock | `net.javacrumbs.shedlock:shedlock-spring`, `shedlock-provider-jdbc-template` | where jobs run (`be-scheduling-shedlock`) |
 | test starters | `spring-boot-starter-<technology>-test` (self-contained) | test scope |
-| Testcontainers | `org.testcontainers:testcontainers-postgresql`, the module of the source database (scheduler; example: `testcontainers-mssqlserver`), `com.github.dasniko:testcontainers-keycloak` (backend) | test scope (`be-testing-conventions`) |
+| Testcontainers | `org.testcontainers:testcontainers-postgresql`, `com.github.dasniko:testcontainers-keycloak` (backend) | test scope (`be-testing-conventions`) |
 
 - `spring-boot-starter-classic` / `-test-classic` are transitional only - not in new modules.
 - Not yet verified by a build in this repository: the starter names in this table.

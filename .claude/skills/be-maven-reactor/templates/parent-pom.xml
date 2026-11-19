@@ -28,7 +28,6 @@
         <module>lib-db</module>
         <module>lib-web</module>
         <module>lib-security</module>
-        <module>integration-contract</module>
         <module>backend-service</module>
         <module>scheduler-service</module>
     </modules>
@@ -77,9 +76,8 @@
             <dependency><groupId>app</groupId><artifactId>lib-db</artifactId><version>${project.version}</version></dependency>
             <dependency><groupId>app</groupId><artifactId>lib-web</artifactId><version>${project.version}</version></dependency>
             <dependency><groupId>app</groupId><artifactId>lib-security</artifactId><version>${project.version}</version></dependency>
-            <dependency><groupId>app</groupId><artifactId>integration-contract</artifactId><version>${project.version}</version></dependency>
 
-            <!-- Third party, not in the Boot BOM (source JDBC drivers such as the example mssql-jdbc, Flyway, Testcontainers modules are in it) -->
+            <!-- Third party, not in the Boot BOM (Flyway, Testcontainers modules are in it) -->
             <dependency><groupId>org.springdoc</groupId><artifactId>springdoc-openapi-starter-webmvc-api</artifactId><version>${springdoc.version}</version></dependency>
             <dependency><groupId>io.swagger.core.v3</groupId><artifactId>swagger-annotations-jakarta</artifactId><version>${swagger.version}</version></dependency>
             <dependency><groupId>org.mapstruct</groupId><artifactId>mapstruct</artifactId><version>${mapstruct.version}</version></dependency>

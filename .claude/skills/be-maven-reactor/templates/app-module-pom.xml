@@ -1,11 +1,8 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!-- Template: backend/backend-service/pom.xml - a runnable application.
      scheduler-service is the same minus the API part: no api-spec link, no generator, no lib-web,
-     no lib-security, no Lombok-in-generated-code reason; plus the JDBC driver of the application's
-     source database (runtime) and, for its ITs, the matching Testcontainers module - the source
-     driver is the application's choice (example: com.microsoft.sqlserver:mssql-jdbc and
-     org.testcontainers:testcontainers-mssqlserver for MS SQL sources); webmvc only to serve
-     actuator on the management port. The role is the module, never a Spring profile.
+     no lib-security, no Lombok-in-generated-code reason; webmvc only to serve actuator on the
+     management port. The role is the module, never a Spring profile.
      Not yet verified by a build in this repository. -->
 <project xmlns="http://maven.apache.org/POM/4.0.0"
          xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
@@ -38,8 +35,6 @@
         <dependency><groupId>app</groupId><artifactId>lib-db</artifactId></dependency>
         <dependency><groupId>app</groupId><artifactId>lib-web</artifactId></dependency>
         <dependency><groupId>app</groupId><artifactId>lib-security</artifactId></dependency>
-        <!-- Row types + enums of the tables shared with scheduler-service (no Spring) -->
-        <dependency><groupId>app</groupId><artifactId>integration-contract</artifactId></dependency>
 
         <dependency><groupId>org.springframework.boot</groupId><artifactId>spring-boot-starter-webmvc</artifactId></dependency>
         <dependency><groupId>org.springframework.boot</groupId><artifactId>spring-boot-starter-validation</artifactId></dependency>

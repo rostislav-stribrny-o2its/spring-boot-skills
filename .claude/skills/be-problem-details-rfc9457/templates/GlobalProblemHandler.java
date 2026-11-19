@@ -47,9 +47,17 @@ public class GlobalProblemHandler extends ResponseEntityExceptionHandler {
 
     @ExceptionHandler(ProblemException.class)
     ProblemDetail handleProblem(ProblemException ex) {
-        ProblemDetail problem = problem(ex.status(), ex.code(), ex.getMessage());
+        ProblemDetail problem = problem(statusOf(ex.kind()), ex.code(), ex.getMessage());
         ex.properties().forEach(problem::setProperty);
         return problem;
+    }
+
+    private static HttpStatus statusOf(ProblemKind kind) {
+        return switch (kind) {
+            case NOT_FOUND -> HttpStatus.NOT_FOUND;
+            case RULE_VIOLATION -> HttpStatus.CONFLICT;
+            case NO_ACCESS -> HttpStatus.FORBIDDEN;
+        };
     }
 
     @ExceptionHandler(OptimisticLockingFailureException.class)

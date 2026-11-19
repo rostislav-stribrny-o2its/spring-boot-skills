@@ -15,8 +15,7 @@ levels of single statements and large backfills in `db-postgres-database-migrati
 patterns, baselining and concurrent branches in [migration-patterns.md](migration-patterns.md).
 
 This skill describes the stack default (ADR-STACK-00005); it applies unless an application ADR says
-otherwise. Application values (the person identifier, which environments read a source copy) appear
-here only as marked examples.
+otherwise. Application values (the person identifier) appear here only as marked examples.
 
 **Step 0 — load the application supplement.** Before applying any value marked *example*, list
 `.agents/skills/app-*/SKILL.md` and load every one whose description names this skill. Such a
@@ -44,30 +43,21 @@ silently never run (both are in the application template of `be-maven-reactor`):
 - Each application owns its schema and its own migration history (ADR-STACK-00005 point 11). In the
   application's first phase the backend has **one schema** (modules are packages, not schemas —
   ADR-STACK-00005 point 12; its name is set in `docs/design/database/`, `backend` in the examples);
-  `scheduler-service`, where the application has one, owns schema `integration`.
+  `scheduler-service`, where the application has one, owns its own schema (ShedLock table).
 - Per schema: an **owner role** that only migrates, and a **runtime role** the application connects
   with, which cannot change the schema.
 - **The database and the roles are created by the one-time DB admin script**, never by a migration.
   Migrations grant the runtime role its rights (below).
-- Order: `integration` migrations, then backend migrations, then both applications (ADR-STACK-00005 point 12).
+- Order: the migrations of each application's schema, then both applications (ADR-STACK-00005 point 12).
   The separate migration step (`db-migrate` / `backend/scripts/db.sh`) keeps this order across all environments.
-  - The `integration` migrations create only the service's own tables (runs, change records,
-    mirror, staging, view state, ShedLock).
-  - The **backend** migrations create the control tables in the backend schema (example:
-    `integration_controls`) and `GRANT USAGE ON SCHEMA` + `GRANT SELECT` on them to the scheduler's
-    runtime role (placeholder `${scheduler_role}`); that role must already exist (admin script).
-  - So on the very first start nothing references a table that does not exist yet: the scheduler
-    reads `backend.<control table>` only at its ticks, and treats a missing table as "no view to
-    read" (`be-scheduler-service`).
 - How the reference implementation runs this on LOCAL and in CI: one script/container that migrates
-  `integration`, then `backend`, then (LOCAL only) the test data — `backend/scripts/db.sh migrate
+  each application's schema, then (LOCAL only) the test data — `backend/scripts/db.sh migrate
   local|deploy` and the `db-migrate` image (`dockerfiles/Dockerfile.db-migrate`), started before both
   applications. Read those files in the repository before changing the order.
 
 **`search_path` — one rule for every login:** each application's logins see **its own schema**
 first, so its own tables are written **unqualified** everywhere (SQL, `@Table`, migrations); a table
-of the **other** application's schema is always **qualified** (`integration.run`,
-`backend.integration_controls`).
+of the **other** application's schema is always **qualified** (example: `<schema>.<table>`).
 
 - runtime login: `spring.datasource.hikari.schema: <own schema>` (Hikari sets it on every
   connection; PostgreSQL's default `"$user", public` would find nothing);
@@ -104,7 +94,7 @@ spring:
 Variable names above are illustrative; take the real ones from `backend/.env.example` and each
 application's `application.yaml` (example: runtime logins `DB_API_USER` for
 `backend-service` and `DB_SCHEDULER_USER` for `scheduler-service`, owner `DB_OWNER_USER` used only in the migration step).
-`scheduler-service` uses `integration` as its schema in place of `backend`.
+`scheduler-service` uses its own schema in place of `backend`.
 
 **Separate step in every environment**: a one-shot, non-root migration container (`dockerfiles/Dockerfile.db-migrate`,
 official Flyway image pinned by digest, Flyway CLI version = the Boot-managed one) or CLI script
@@ -128,18 +118,12 @@ ALTER DEFAULT PRIVILEGES IN SCHEMA ${flyway:defaultSchema}
 
 Role and schema names come from placeholders (they differ per environment), never literals; role
 names are quoted. The default covers what both runtime roles need (the ShedLock table needs
-`SELECT, INSERT, UPDATE`; staging, mirror and run state in `integration` need all four). Narrower
-rights are taken away or granted explicitly in the migration that creates the table:
+`SELECT, INSERT, UPDATE`). Narrower rights are taken away or granted explicitly in the migration that
+creates the table:
 
 ```sql
--- integration: change records are append-only for the runtime role (ADR-STACK-00005 point 12)
-REVOKE UPDATE, DELETE ON integration_change_records FROM "${runtime_role}";
--- + a BEFORE UPDATE OR DELETE trigger that raises an exception (immutability guard, allowed)
--- deletion after the retention period: a separate cleanup role, GRANT DELETE explicitly
-
--- backend: the scheduler may read the control tables it is driven by
-GRANT USAGE ON SCHEMA ${flyway:defaultSchema} TO "${scheduler_role}";
-GRANT SELECT ON TABLE integration_controls TO "${scheduler_role}";
+-- example: a table that is append-only for the runtime role
+REVOKE UPDATE, DELETE ON notifications FROM "${runtime_role}";
 ```
 
 ## Location and File Naming
@@ -174,8 +158,7 @@ R__order_summary_view.sql
   schema (DDL in `be-scheduling-shedlock`).
 - **Index pattern.** An index on a NEW table goes in that table's create file. An index on an EXISTING
   table: `DROP INDEX CONCURRENTLY IF EXISTS <new index>` first, then a plain `CREATE INDEX CONCURRENTLY` (never `IF NOT EXISTS`: a failed concurrent build leaves an INVALID index of that name, which the rerun would keep), then `DROP INDEX CONCURRENTLY` of the index it replaces, all in its own `V` file, plus a sibling
-  `<same file name>.sql.conf` containing `executeInTransaction=false` (example: `backend/scheduler-service/src/main/resources/db/migration/V00007__undo_integration_constraints_and_run_id_index.sql`
-  and its `.sql.conf`). Flyway's PostgreSQL transactional lock is already off (`backend/scripts/db.sh`,
+  `<same file name>.sql.conf` containing `executeInTransaction=false`. Flyway's PostgreSQL transactional lock is already off (`backend/scripts/db.sh`,
   `dockerfiles/Dockerfile.db-migrate`, both `application.yaml`); nothing more to configure.
 
 ## Example Migrations
@@ -210,10 +193,7 @@ chain; use the target-version test only when the data before the migration matte
 - **Reference data** (lookup tables, codes the logic relies on) is part of the schema: versioned `V`
   migrations with stable explicit IDs, in every environment. Changing it = a new `V` migration.
 - **Fictitious static data** (persons and records to work with right after the first start) exists
-  **only on LOCAL and on DEV branch stacks** — never on TEST, PROD or an environment that reads a
-  copy of a source (*example:* a DEV reference stack whose synchronisation would suspend fictitious
-  persons) (ADR-STACK-00005 point 16). Which environments read a source copy is the application's
-  own decision.
+  **only on LOCAL and on DEV branch stacks** — never on TEST or PROD (ADR-STACK-00005 point 16).
 
 ```
 <app-module>/src/main/resources/db/testdata/

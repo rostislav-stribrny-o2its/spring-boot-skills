@@ -3,7 +3,7 @@ name: be-testing-conventions
 description: >
   Java/Spring backend: use when writing or reviewing tests — which test goes where, *Test
   (Surefire) vs *IT (Failsafe), the shared IT base classes AbstractIT / AbstractSchedulerIT with
-  PostgreSQL (and the source databases of scheduler-service) in Testcontainers, requirement tags, naming, contract tests for
+  PostgreSQL in Testcontainers, requirement tags, naming, contract tests for
   every operation, ArchUnit, number boundaries, the security matrix and test data. Entry point; the
   be-spring-testing-* skills hold the techniques.
 ---
@@ -17,9 +17,9 @@ This skill sets the conventions; the techniques are in the testing skills:
 `be-spring-testing-properties`. Where their examples differ from this skill, this skill wins
 (names, base classes).
 
-This skill describes the stack default (ADR-STACK-00006; source tests per ADR-STACK-00009 point 4);
-it applies unless an application ADR says otherwise. Application values (the source database
-engine, the range of test person identifiers) appear here only as marked examples.
+This skill describes the stack default (ADR-STACK-00006);
+it applies unless an application ADR says otherwise. Application values (the range of test person
+identifiers) appear here only as marked examples.
 
 **Step 0 — load the application supplement.** Before applying any value marked *example*, list
 `.agents/skills/app-*/SKILL.md` and load every one whose description names this skill. Such a
@@ -55,7 +55,6 @@ overrides this skill on the same point.
 | API operation (contract, status, Problem Details, validation, authorization) | `MockMvcTester` through the generated controller, the delegate and the real service, shared context | `*IT` |
 | repository, `JdbcClient` query, aggregate mapping, constraint, `search_path` | through the real repository, shared context | `*IT` |
 | flow across layers incl. transactions | through HTTP or the service, shared context | `*IT` |
-| `scheduler-service` reading a source | the source's database engine in Testcontainers (the image matching the application's source; example: MS SQL), with test views generated from the view contracts (ADR-STACK-00009 point 4), shared context of that application | `*IT` |
 | real Keycloak token through the decoder | one class (`be-spring-testing-security`) | `*IT` |
 | architecture | ArchUnit | `*Test` |
 | migrations | Flyway CI checks (empty DB, upgrade from last release) | `*IT` |
@@ -109,8 +108,6 @@ final class TestImages {   // the one place in test code; same references (tag@d
     static final String POSTGRES = "postgres:18.6-trixie@sha256:<digest from docker-compose.yml>";
     static final String KEYCLOAK = "quay.io/keycloak/keycloak:<tag@digest from docker-compose.yml>";
     static final String KEYCLOAK_CONFIG_CLI = "adorsys/keycloak-config-cli:<tag@digest from docker-compose.yml>";
-    // scheduler-service: SOURCE = the image matching the application's source database
-    // (example: the SQL Server image for MS SQL sources; not in docker-compose)
     private TestImages() { }
 }
 ```
@@ -130,19 +127,11 @@ final class TestImages {   // the one place in test code; same references (tag@d
 
 **`scheduler-service`** has `AbstractSchedulerIT`: `@SpringBootTest`, **no** `@AutoConfigureMockMvc`
 (it has no API). It holds one static `PostgreSQLContainer` (pinned `postgres:18` image) started in a
-static initializer that also creates the owner, scheduler, api and cleanup logins and schema
-`integration`; a `@DynamicPropertySource` points `spring.datasource.*` at the owner login and
-`app.datasource.cleanup.*` at the cleanup login, registers one stand-in source
-(`app.sources.views[uncontracted_source_view]`) for the failed-run path, enables Flyway and sets every
-job cron to `-`. A `@BeforeEach` creates the stub `backend.integration_control`
-table the backend migrations own. Grant tests connect as the runtime logins with plain JDBC.
-
-*(planned)* The source database next to PostgreSQL — the Testcontainers module of the application's
-source engine (*example:* `org.testcontainers:testcontainers-mssqlserver` with `acceptLicense()` for
-MS SQL) — started once in the same base class and registered for `app.sources.views.<view>.*` there,
-with the test views created from the view contracts (`be-scheduler-service`, ADR-STACK-00009 point 4).
-Database sources are JDBC, so there is no WireMock for them; should an HTTP integration ever appear,
-stub it once in the base class the same way.
+static initializer that also creates the owner and runtime logins and the service's schema; a
+`@DynamicPropertySource` points `spring.datasource.*` at the owner login, enables Flyway and sets every
+job cron to `-`, so no job runs unless a test enables the sample job. Grant tests connect as the
+runtime logins with plain JDBC. One IT proves that the sample job runs once across two lock holders
+(ShedLock table in PostgreSQL, `be-scheduling-shedlock`).
 
 ## Requirement tags
 
@@ -231,11 +220,6 @@ permissive test configuration to get green tests.
     <artifactId>archunit-junit5</artifactId>
     <scope>test</scope>
 </dependency>
-<dependency>  <!-- scheduler-service only: the module of the source database (example: MS SQL) -->
-    <groupId>org.testcontainers</groupId>
-    <artifactId>testcontainers-mssqlserver</artifactId>
-    <scope>test</scope>
-</dependency>
 ```
 
 Plus the Boot 4 test starter of each technology (`spring-boot-starter-webmvc-test`,
@@ -251,7 +235,6 @@ into the parent POM (`be-maven-reactor`).
 - Agent uses H2 or an embedded database — PostgreSQL 18 in Testcontainers
 - Agent uses `@MockBean` — removed in Boot 4; `@MockitoBean` / `@MockitoSpyBean`
 - Agent adds `@MockitoBean`, `properties` or `@DynamicPropertySource` in an IT subclass — new context; move it to the base class
-- Agent stubs a source database with WireMock or a mock — the source's engine in Testcontainers
 - Agent writes a second image tag next to `TestImages` — one constant, equal to docker-compose
 - Agent uses `@DataJpaTest` or JPA test utilities — the base has no JPA
 - Agent uses `TestRestTemplate` by habit — `RestTestClient` (`@AutoConfigureRestTestClient`) or `MockMvcTester`
@@ -263,7 +246,7 @@ into the parent POM (`be-maven-reactor`).
 - Agent uses `org.testcontainers:postgresql` (Testcontainers 1) — Boot 4 manages `testcontainers-postgresql`
 
 Not yet verified by a build in this repository (init script with `@ServiceConnection`, image with
-digest in `PostgreSQLContainer`, the source container of Testcontainers 2 — example: `MSSQLServerContainer`).
+digest in `PostgreSQLContainer`).
 
 ## Provenance
 
@@ -272,5 +255,4 @@ Source: [rrezartprebreza/spring-boot-skills](https://github.com/rrezartprebreza/
 `skills/spring-boot-4/testing-pyramid` (security regression matrix, naming, Testcontainers 2 dependencies), MIT License,
 © Rrezart Prebreza (see `LICENSE.txt`). Techniques are delegated to the spring-testing-* skills from
 [Kehrlann/spring-boot-testing-skills](https://github.com/Kehrlann/spring-boot-testing-skills) (Apache-2.0).
-Changes in this version: `*Test`/`*IT` split, shared IT base classes with `@ServiceConnection`, source databases in
-Testcontainers for `scheduler-service`. Project-specific conventions: section "Project-specific conventions".
+Changes in this version: `*Test`/`*IT` split, shared IT base classes with `@ServiceConnection`. Project-specific conventions: section "Project-specific conventions".
