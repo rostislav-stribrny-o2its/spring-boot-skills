@@ -11,7 +11,7 @@ description: >
 # Maven Reactor
 
 The whole Java backend is **one Maven reactor in `backend/`** with **one parent POM** that holds
-every version (ADR-00002, point 2). One command builds and tests everything in dependency order:
+every version (ADR-STACK-00001, point 2). One command builds and tests everything in dependency order:
 
 ```
 ./mvnw -B -ntp verify          # the full gate, as CI runs it (unit + integration tests; needs Docker)
@@ -19,7 +19,12 @@ every version (ADR-00002, point 2). One command builds and tests everything in d
 ```
 
 Order inside the reactor: API model -> exported spec -> shared libraries -> applications.
-`specs/` (repository root) is **not** a module (ADR-00006); the build writes into it.
+`specs/` (repository root) is **not** a module (ADR-STACK-00003); the build writes into it.
+
+**Step 0 — load the application supplement.** Before applying any value marked *example*, list
+`.agents/skills/app-*/SKILL.md` and load every one whose description names this skill. Such a
+supplement (an application skill, name prefix `app-`) carries the application's values and
+overrides this skill on the same point.
 
 ## 1. Layout
 
@@ -40,7 +45,7 @@ backend/                          reactor root: pom.xml (packaging pom), .mvn/, 
 ```
 
 - `integration-contract` and `scheduler-service` (and schema `integration`) are **optional** — they exist
-  only in applications that integrate external source systems (ADR-00002 point 2). An application without
+  only in applications that integrate external source systems (ADR-STACK-00001 point 2, ADR-STACK-00007 point 2). An application without
   source systems omits both modules and has only `backend-service`.
 - Templates: `templates/parent-pom.xml`, `templates/lib-module-pom.xml`,
   `templates/app-module-pom.xml`. Copy, then adapt; keep the structure.
@@ -63,7 +68,7 @@ backend/                          reactor root: pom.xml (packaging pom), .mvn/, 
 
 Where present, `scheduler-service` imports `lib-core` and `lib-db`, never `lib-web` or `lib-security`;
 it needs no Spring MVC. In an application without source systems, `scheduler-service` and
-`integration-contract` are omitted entirely (ADR-00002 point 2).
+`integration-contract` are omitted entirely (ADR-STACK-00001 point 2, ADR-STACK-00007 point 2).
 
 ## 2. Module roles and dependency rules
 
@@ -80,7 +85,7 @@ it needs no Spring MVC. In an application without source systems, `scheduler-ser
 
 - **No application depends on another application.** Shared code goes to a `lib-*` module.
 - **The backend implements code generated from the committed spec, never the model interfaces**
-  (ADR-00006). So `backend-service` does not see `api-model` classes.
+  (ADR-STACK-00003). So `backend-service` does not see `api-model` classes.
 - **Build order without classpath leakage:** `backend-service` declares `api-spec` with
   `<scope>provided</scope>` and a wildcard exclusion `*:*`. Maven then builds (and exports) the spec
   before generating code from it, also with `-pl backend-service -am` and `-T`. ArchUnit forbids
@@ -155,14 +160,14 @@ When `scheduler-service` is present, `SchedulerServiceApplication` imports `LibD
 
 ## 5. Applications: the module decides the role
 
-- `backend-service` and (when source systems are integrated, ADR-00002 point 2) `scheduler-service`
+- `backend-service` and (when source systems are integrated, ADR-STACK-00001 point 2, ADR-STACK-00007 point 2) `scheduler-service`
   are separate runnable modules, each with its own `spring-boot-maven-plugin` and container image.
   An application without source systems omits `scheduler-service`. **What an application does is
-  decided by its module, not by a Spring profile or a property** (ADR-00002 point 2).
+  decided by its module, not by a Spring profile or a property** (ADR-STACK-00001 point 2).
 - Spring profiles exist **only for environment behaviour**. A profile or property that switches a
   role on or off is a finding.
 - Scheduled jobs use `@Scheduled` with a ShedLock lock in PostgreSQL, in a pool separate from REST
-  handling (ADR-00002, point 4; `be-scheduling-shedlock`).
+  handling (ADR-STACK-00001, point 4; `be-scheduling-shedlock`).
 
 ## 6. Parent POM - rules
 
@@ -184,10 +189,10 @@ See `templates/parent-pom.xml` (complete skeleton).
 - `repo.root` = `${maven.multiModuleProjectDirectory}/..` (`backend/.mvn/` makes it the reactor root
   even with `-pl`); every path to `specs/` is built from it.
 - Enforcer: `requireJavaVersion [25,26)`, `requireMavenVersion`, `bannedDependencies` for
-  JPA/Hibernate, broker and Redis clients (ADR-00002). Spotless (`palantirJavaFormat`,
+  JPA/Hibernate, broker and Redis clients (ADR-STACK-00001). Spotless (`palantirJavaFormat`,
   `removeUnusedImports`) `check` in the parent's `<plugins>`. Profiles `sast` (SpotBugs +
   FindSecBugs) and `sca` (CycloneDX SBOM), activated by `SAST_ENABLED=true` / `SCA_ENABLED=true`
-  (ADR-00009 point 2). All blocks are in the template.
+  (ADR-STACK-00006 point 2). All blocks are in the template.
 
 ## 7. Annotation processors and Lombok
 
@@ -205,7 +210,7 @@ Order **Lombok -> `lombok-mapstruct-binding` -> MapStruct** in the parent's `mav
 
 - **Where ITs run.** No CI-only switch: `skipITs=false`, so every `verify` runs the ITs — CI runs
   `backend/scripts/db.sh migrate` then `./mvnw -B verify` (with `SAST_ENABLED`/`SCA_ENABLED`).
-  Locally the default loop is `./mvnw -B test` (no Docker, ADR-00009 point 1); without Docker use
+  Locally the default loop is `./mvnw -B test` (no Docker, ADR-STACK-00006 point 1); without Docker use
   `-DskipITs` and leave the ITs to CI (the spec export still runs).
 - Surefire includes only `**/*Test.java`, Failsafe only `**/*IT.java` (explicit, not the plugin
   defaults). Failsafe's `excludedGroups` comes from the property `it.excludedGroups` (empty by
@@ -214,11 +219,20 @@ Order **Lombok -> `lombok-mapstruct-binding` -> MapStruct** in the parent's `mav
   IT; locally `-Dit.excludedGroups=keycloak` (comma-separated for more) skips it. Other `@Tag`s on
   test classes are traceability labels, not groups.
 - Unit coverage gate: JaCoCo `check` in `test` with `jacoco.unit.line.min` (0.80) over business
-  logic (ADR-00009 point 4); modules without business logic set `jacoco.unit.skip=true`.
+  logic (ADR-STACK-00006 point 4); modules without business logic set `jacoco.unit.skip=true`, and
+  `-DskipTests` skips it too (`jacoco.unit.skip` defaults to `${skipTests}`). Excluded
+  (covered by ITs or config only): `**/api/generated/**`, `**/*MapperImpl*`, `**/config/**`,
+  `**/*Application*`, `**/*Properties*`, `**/api/**`, `**/persistence/**`, `**/job/**`. Library entry
+  configurations (`Lib*Configuration`) count: security filter chains and handlers are logic and get
+  `*Test`s.
 - JaCoCo: `prepare-agent` writes `surefireArgLine`, `prepare-agent-integration` writes
   `failsafeArgLine` (separate properties, so each plugin gets one agent); `merge` after the
   integration tests and `report` in `verify` produce one report per module
   (`backend/<module>/target/site/jacoco/jacoco.xml`) for Sonar.
+- Test JVMs: one Surefire and one Failsafe fork per module (the Spring context cache and the
+  Testcontainers singletons live per JVM), started with the JaCoCo agent plus `testJvmArgs`
+  (`-XX:TieredStopAtLevel=1`; empty it with `-DtestJvmArgs=`). No GC flag there: a caller's
+  `JAVA_TOOL_OPTIONS` may set one, and two collectors abort the JVM.
 - Without Docker, ITs fail - they do not silently skip.
 - Test starters: `spring-boot-starter-<technology>-test` (Boot 4); they are self-contained.
 
@@ -227,14 +241,16 @@ Order **Lombok -> `lombok-mapstruct-binding` -> MapStruct** in the parent's `mav
 `api-model` (compile, ArchUnit over the model) → `api-spec` (start, export `specs/…`, stop) →
 `lib-*`, optional `integration-contract` → `backend-service` (generate from the just re-exported spec,
 compile, tests, ArchUnit, ITs) → optional `scheduler-service` → JaCoCo reports; CI then checks
-`git diff --exit-code -- specs/` and runs the spec guards.
+`git diff --exit-code -- specs/` and runs the spec guards. That is the dependency order; the build
+runs in parallel (`-T1C` in `backend/.mvn/maven.config`), so `lib-*` build beside `api-spec` and
+`scheduler-service` beside `backend-service`, each module after everything it depends on.
 
 ### Local incremental verification in three stages
 
 Never re-run the whole reactor on every fix: (1) inner loop on the touched test or module, (2) a
 per-item check of what depends on the change, (3) one final gate after all items —
-`./mvnw -q spotless:apply && SAST_ENABLED=true SCA_ENABLED=true ./mvnw -B verify` (+
-`backend/scripts/api-guards.sh` after a model change). Commands: [local-verification.md](local-verification.md).
+`./mvnw -q spotless:apply && ./mvnw -B verify` (+ `backend/scripts/api-guards.sh` after a model
+change; AGENT_BEHAVIOUR-048; SAST/SCA run in CI, RULE-008). Commands: [local-verification.md](local-verification.md).
 
 ## 10. Spring Boot 4 starters
 

@@ -10,7 +10,7 @@ description: >
 
 # Backend Layers
 
-The backend is **layered**, one predictable pattern in every domain module (ADR-00008 point 6:
+The backend is **layered**, one predictable pattern in every domain module (ADR-STACK-00005 point 6:
 the same three object layers in every domain module). Each layer has one job; ArchUnit fails the build when a
 dependency points the wrong way (`be-archunit-rules`).
 
@@ -32,12 +32,12 @@ PostgreSQL 18             ← schema from Flyway only; integrity constraints, no
 ## Applications and libraries
 
 - **`backend-service`** — the REST API for the frontend, all business logic, its own scheduled jobs.
-- **`scheduler-service`** (optional, present only in applications that read source systems, ADR-00002 point 2) —
+- **`scheduler-service`** (optional, present only in applications that read source systems, ADR-STACK-00001 point 2, ADR-STACK-00007 point 2) —
   reads source systems into the `integration` schema; no domain model, no layers of this skill (see
   `be-scheduler-service`). Applications without source systems omit `scheduler-service` and schema `integration`.
 - **Role is decided by the Maven module, never by a Spring profile.** Profiles only select
   environment behaviour (LOCAL, DEV, TEST, PROD). A profile that switches a role's classes on or
-  off is a review finding (ADR-00002 point 2).
+  off is a review finding (ADR-STACK-00001 point 2).
 - **Shared libraries `lib-<topic>`** (`lib-core`, `lib-db`, `lib-web`, `lib-security`) carry code
   all applications (or `backend-service` alone when no scheduler) or several modules need; each has one
   entry `@Configuration`, composed by the application with explicit `@Import`. Module list, what lives in
@@ -63,12 +63,12 @@ app.lib.<topic>..                             shared library code (one entry @Co
 ```
 
 A module is a package of code, not a database schema: the backend has one schema
-(ADR-00008 point 12; migrations run as the schema owner, the application at runtime under a role
+(ADR-STACK-00005 point 12; migrations run as the schema owner, the application at runtime under a role
 that may not change the schema). SQL and `@Table` names of that schema are unqualified (the connection's
 `search_path` is the backend schema); tables of schema `integration` (optional, present only when
 source systems are integrated) are always qualified (`db-flyway-migrations`).
 
-## Three object layers (ADR-00008 point 6)
+## Three object layers (ADR-STACK-00005 point 6)
 
 | Layer | Naming | Written by | Rules |
 |---|---|---|---|
@@ -80,13 +80,13 @@ Every crossing is a MapStruct mapper on the shared configuration — `…ApiMapp
 `…PersistenceMapper` in `..persistence..` (`be-mapstruct-dto-layers`). A property that is not
 mapped is a compile error.
 
-**Writes always go through the domain; reads may skip it** (ADR-00008 point 6):
+**Writes always go through the domain; reads may skip it** (ADR-STACK-00005 point 6):
 
 - write: `CreateOrderDto` → `…ApiMapper` → command → service loads the domain record from the write
   repository, applies the rule, saves → result domain record → `…ApiMapper` → `OrderDto`;
 - read: API delegate → query service (`@Transactional(readOnly = true)`) → read repository returns
   `…Row` / page of `…Row` → `…ApiMapper` → `…Dto`. Even a read restricts rows to what the user may
-  see (ADR-00008 leaves the mechanism open; it is decided separately — do not invent one).
+  see (ADR-STACK-00005 leaves the mechanism open; it is decided separately — do not invent one).
 
 ## Layer rules
 
@@ -101,7 +101,7 @@ public class OrdersApiDelegateImpl implements OrdersApiDelegate {   // generated
     private final OrderApiMapper mapper;
 
     @Override
-    @PreAuthorize(Roles.HAS_PROJECT_MANAGER)                         // every operation: a concrete role
+    @PreAuthorize(Roles.HAS_USER)                                    // every operation: a concrete role
     public ResponseEntity<OrderDto> createOrder(CreateOrderDto body) {
         Order created = orderService.create(mapper.toCommand(body));
         return ResponseEntity.status(HttpStatus.CREATED).body(mapper.toDto(created));
@@ -140,18 +140,19 @@ public class OrderService {
 ```
 
 - A concrete class with constructor injection; an interface only with a concrete reason
-  (ADR-00002 point 7: generated implementation, module or external-system boundary, several
+  (ADR-STACK-00001 point 7: generated implementation, module or external-system boundary, several
   implementations).
-- **One service operation = one transaction** (ADR-00008 point 14). It may change several
+- **One service operation = one transaction** (ADR-STACK-00005 point 14). It may change several
   aggregates. Isolation is PostgreSQL's default `READ COMMITTED` — do not set another level.
 - A version conflict leaves the service as `OptimisticLockingFailureException` and becomes `409`
-  **without retry**; a deadlock is retried **once** automatically, around the whole transaction, from
-  a separate bean (ADR-00008 point 14). Mechanics in `be-transactional-patterns`; HTTP mapping in
+  **without retry**; a deadlock is retried around the whole transaction, after a full rollback, from
+  a separate bean, and only for operations explicitly marked as idempotent (ADR-STACK-00005 point
+  14); retrying **once** is this skill's choice, not the ADR's. Mechanics in `be-transactional-patterns`; HTTP mapping in
   `be-problem-details-rfc9457`.
 - Takes and returns domain types, commands or `…Row` read models — never `…Dto`, `…Entity`,
   `HttpServletRequest` or `ResponseEntity`.
 - Cross-module calls go service → service. Never into another module's persistence package.
-- Time from an injected `Clock`; "today" in the configured application time zone (IANA id, example: Europe/Prague; ADR-00008 point 15).
+- Time from an injected `Clock`; "today" in the configured application time zone (IANA id, example: Europe/Prague; ADR-STACK-00005 point 15, ADR-STACK-00008 point 7).
 
 **Write repository** (`..persistence..`) — a `@Repository` class that wraps a package-private
 Spring Data JDBC `ListCrudRepository<…Entity, Long>` and the `…PersistenceMapper`; exposes only
@@ -160,11 +161,11 @@ domain records; returns the saved copy (it carries the new `id` / `version`). Ag
 
 **Read repository** (`..persistence..`) — a `@Repository` class with `JdbcClient`; named
 parameters, fixed SQL fragments, `…Row` results, pages of at most 500 rows, streams only for
-export and batches (ADR-00008 point 7): `be-jdbc-client-reads`.
+export and batches (ADR-STACK-00005 point 7): `be-jdbc-client-reads`.
 
 Technical tables of `backend-service` (job queue, optional integration control tables when source systems are integrated, audit) use SQL via
 `JdbcClient` without domain model or aggregates; a bulk write from domain objects may use batched
-SQL (ADR-00008 point 4).
+SQL (ADR-STACK-00005 point 4).
 
 **Database** — schema only from Flyway migrations; declarative constraints; no procedures or
 triggers with business logic (`db-flyway-migrations`, `db-design-postgres-tables`).
@@ -202,7 +203,7 @@ api ──► service ──► domain ◄── persistence
 
 - `..domain..` depends on nothing of Spring Data, Jackson, generated API types or persistence.
 - `..api.generated..` types are used only in `..api..`; `…Entity` never reaches `..api..`.
-- Spring Data repositories are called only from the write path of services (ADR-00008: writes
+- Spring Data repositories are called only from the write path of services (ADR-STACK-00005: writes
   through Spring Data JDBC aggregates, reads through `JdbcClient`).
 - `@Transactional` only in `..service..`; `@Mapper` only with the shared config; no field
   injection; no `System.out`. Rule code: `be-archunit-rules`.

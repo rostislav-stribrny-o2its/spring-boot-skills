@@ -5,6 +5,9 @@ stack template; names marked *example* are that application's values. In a new r
 real ones first: `backend/backend-service/src/main/resources/db/migration/` (tables),
 `backend/api-model/**/user/` (response), `keycloak/config/realm.yaml` (realm). Where the repository
 already has them, the repository wins; where it has nothing, create exactly these shapes.
+The person identifier, the reasons of an entry ban and the way the entry role is granted are the
+application's own decisions (ADR-STACK-00002 point 3); the values below are examples, and an
+application supplement skill (name prefix `app-`) that fixes them overrides this file on that point.
 
 ## 1. Tables (backend schema, one `V` migration)
 
@@ -16,7 +19,7 @@ CREATE TABLE persons (                                   -- example name; the pe
     account_subject VARCHAR(255) UNIQUE,                 -- Keycloak "sub", bound on first sign-in; audit only, never a key
     email           VARCHAR(255),                        -- display data: the token carries none
     full_name       VARCHAR(255),                        -- display name shown by the frontend
-    suspended       BOOLEAN NOT NULL DEFAULT false,      -- a ban; takes effect on the next request
+    suspended       BOOLEAN NOT NULL DEFAULT false,      -- entry ban (example reason); takes effect on the next request
     version         BIGINT NOT NULL DEFAULT 0,
     created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at      TIMESTAMPTZ NOT NULL DEFAULT now()
@@ -58,22 +61,25 @@ The standard audit columns `created_by`/`updated_by` (`db-design-postgres-tables
 
 One `@Service` implements the port and also serves `/api/users/me` (reference names:
 `UserAccessService`, `UserAccessRepository`, `UserPersonRow`, `UserProfile`, `UserApiMapper`).
+The method names below are a generic shape (*example:* `findByPrincipal`); where the repository
+already has these classes, the repository's names win (the reference implementation names the
+lookup after its principal column).
 
 ```java
 @Override
 @Transactional
-public AccessDecision decide(String principal, String accountSubject) {
-    Optional<UserPersonRow> person = repository.findByPersonalNumber(principal);
-    if (person.isEmpty() && accountSubject != null && !accountSubject.isBlank()) {
-        person = repository.findByAccountSubject(accountSubject);
-    }
-    if (person.isEmpty()) {
-        auditService.record(null, null, "auth.unpaired", "account", accountSubject, 3, "UNPAIRED");
-        return AccessDecision.unpaired();
-    }
+public AccessDecision decide(String principal, String accountSubject) {     // read-only apart from binding
+    // UNPAIRED and NO_ROLE are states of the mechanism; the entry-ban reasons and where they are
+    // checked are the application's (example below: SUSPENDED, checked before NO_ROLE).
+    Optional<UserPersonRow> person = repository.findByPrincipal(principal);   // example name; never by sub
+    if (person.isEmpty()) return AccessDecision.unpaired();       // audited once, in loadProfile (/api/users/me)
     UserPersonRow p = person.get();
-    if (p.accountSubject() == null && accountSubject != null && !accountSubject.isBlank()) {
-        repository.bindAccountSubject(p.id(), accountSubject);       // first sign-in binds sub
+    if (accountSubject != null && !accountSubject.isBlank()) {
+        if (p.accountSubject() == null) {
+            repository.bindAccountSubject(p.id(), accountSubject);   // first sign-in binds sub (audit only)
+        } else if (!p.accountSubject().equals(accountSubject)) {
+            log.warn("Token subject differs from the subject bound to person id={}", p.id());   // no deny
+        }
     }
     Set<String> roles = repository.findRoleCodes(p.id());
     if (p.suspended()) return new AccessDecision(AccessState.SUSPENDED, p.id(), roles);
@@ -86,7 +92,7 @@ SQL of the repository (`JdbcClient`, `be-jdbc-client-reads`):
 
 ```sql
 SELECT id, personal_number, account_subject, email, full_name, suspended
-FROM persons WHERE personal_number = :personalNumber;          -- also: WHERE account_subject = :sub, WHERE id = :id
+FROM persons WHERE personal_number = :principal;               -- example principal column; also: WHERE id = :id
 
 SELECT r.code FROM roles r
 JOIN person_roles pr ON pr.role_id = r.id
@@ -99,7 +105,7 @@ WHERE pr.person_id = :personId;
 ```
 
 `loadProfile(AppAuthentication)` (`@Transactional(noRollbackFor = NoAccessException.class)`): if
-`auth.noAccessReason()` is present → audit an `UNPAIRED` reason (same call as above) and throw
+`auth.noAccessReason()` is present → audit an `UNPAIRED` account (§4) and throw
 `NoAccessException(reason)`; otherwise load the person by `auth.personId()`, its role codes and
 permission codes (both sorted) and return the profile.
 
@@ -122,12 +128,14 @@ Every field is `required` in the contract; `email` and `fullName` are additional
 (`be-api-contract-first`, "Required and empty"). Endpoint interface: `UsersEndpoint`,
 `@RequestMapping("/api/users")`, `@GetMapping("/me")`, `operationId = "getMe"`, `@Tag(name = "Users")`.
 
-`403` body: `application/problem+json`, `type` `/problems/no-access`, property `reason`
-(`UNPAIRED` · `NO_ROLE` · `SUSPENDED`).
+`403` body: `application/problem+json`, `type` `/problems/no-access`, property `reason` =
+`UNPAIRED` · `NO_ROLE` (states of the mechanism) or one of the application's entry-ban reasons
+(example: `SUSPENDED`).
 
 ## 4. Audit of an unpaired account
 
-Written by `backend-service`'s own audit module (package `app.backend.audit`, table `audit_logs`,
+Written once per `/api/users/me` call of the unpaired caller (`loadProfile`, never in `decide`, which
+runs on every request) by `backend-service`'s own audit module (package `app.backend.audit`, table `audit_logs`,
 `AuditService.record(...)`), not by a library: `action = 'auth.unpaired'`, `resource_type =
 'account'`, `resource_id = <sub>`, status `failed`, `extra` = the reason. No personal data other than
 `sub` is stored. If the application has no audit module yet, log the event at `WARN` with the `sub`
@@ -149,8 +157,8 @@ Checklist (the target state):
 3. **API audience.** A client for the API (no flows enabled; example: `app-api`) and an audience
    mapper on the frontend client (example: `app-frontend`) so `aud` contains the API audience.
 4. **Entry role** (example: `app-user`) as a client role of the API client or a realm role,
-   granted through one directory (AD) entry group, a separate one per environment; its name is
-   environment configuration.
+   granted to whom the application decides in its own ADR (example: through one directory entry
+   group, a separate one per environment, whose name is environment configuration).
 5. **Principal claim.** A user-attribute mapper putting the principal claim (example:
    `personal_number`) into the access token; no name or e-mail in the access token.
 6. **Test accounts.** Fictitious accounts with principals matching the fictitious persons of the
@@ -202,7 +210,7 @@ clients:
 - Test accounts (`keycloak/config/development/users.yaml`, never in `production/`) carry
   principal attribute (example: `attributes.personal_number`) matching `app.security.principal-claim`
   equal to the fictitious persons of `db/testdata` (`db-flyway-migrations`) and the entry role.
-- Granting the entry role through a directory (AD) group: an LDAP/AD group mapper in the realm's user
+- *Example* — granting the entry role through a directory group: an LDAP/AD group mapper in the realm's user
   federation maps the environment's entry group to the entry role; the group name is environment
   configuration (one group per environment). Until the directory is connected, test accounts get the
   role directly.

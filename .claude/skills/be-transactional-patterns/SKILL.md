@@ -19,7 +19,7 @@ description: >
   Spring Data repository transactions; repository annotations are not inherently wrong.
 - Default propagation is `REQUIRED` — joins existing transaction or creates one
 - **One service operation (use case) = one transaction**; it may change several aggregates;
-  isolation stays PostgreSQL's `READ COMMITTED` (ADR-00008 point 14) — never set another level.
+  isolation stays PostgreSQL's `READ COMMITTED` (ADR-STACK-00005 point 14) — never set another level.
 - Use `readOnly = true` for appropriate read units of work. It is an optimization hint,
   not write prevention, authorization or automatic routing to a read replica.
 - Keep existing architecture and transaction-manager choices. A local database transaction
@@ -133,7 +133,7 @@ public Order createOrder(CreateOrderCommand command) throws InsufficientInventor
 Never use `noRollbackFor` or a `catch` inside the transaction to recover from an optimistic-lock
 conflict (`OptimisticLockingFailureException`): the data read in this transaction is stale. Let it
 roll back and leave the service; the global handler answers `409 /problems/stale-version` and the
-user reloads (ADR-00007 point 10, ADR-00008 point 14). **A version conflict is never retried.**
+user reloads (ADR-STACK-00004 point 10, ADR-STACK-00005 point 14). **A version conflict is never retried.**
 
 ## Optimistic Locking
 
@@ -166,8 +166,9 @@ changes to a child entity must go through the root and its `save(...)`.
 
 ## Retrying a Deadlock — once
 
-ADR-00008 point 14: a **deadlock** in the database is retried **once**, automatically, around the
-whole transaction; a **version conflict is not retried** (above). Deadlocks are prevented first by
+ADR-STACK-00005 point 14: a **deadlock** in the database is retried automatically, around the
+whole transaction; a **version conflict is not retried** (above). Retrying **once** is this skill's
+choice, not the ADR's. Deadlocks are prevented first by
 short transactions and a deterministic lock order (e.g. sort IDs before a bulk change); the retry,
 after a full rollback at the use-case boundary (outer facade), is only for operations explicitly
 marked idempotent. Retry support ships in core Spring
@@ -286,7 +287,7 @@ engine for isolation and contention tests. A test-wide rollback can hide after-c
 - Agent commits success audit entries with REQUIRES_NEW - commit them with the business mutation.
 - Agent suppresses optimistic-lock rollback or retries it - let it roll back; the client gets `409`, no retry.
 - Agent retries a deadlock more than once or inside the failed transaction - one retry, from a separate bean, fresh transaction.
-- Agent sets `isolation = SERIALIZABLE` / `REPEATABLE_READ` - `READ COMMITTED` (ADR-00008 point 14).
+- Agent sets `isolation = SERIALIZABLE` / `REPEATABLE_READ` - `READ COMMITTED` (ADR-STACK-00005 point 14).
 - Agent uses JPA idioms (`@Entity`, `EntityManager`, dirty checking, `ObjectOptimisticLockingFailureException`) - the base has no JPA; aggregates are written by Spring Data JDBC `save(...)` and conflicts raise `OptimisticLockingFailureException`.
 - Agent expects a modified aggregate to be written at commit without `save(...)` - Spring Data JDBC has no dirty checking.
 - Agent lets a `Stream` outlive its transaction or reads it without try-with-resources - the transaction must span the consumer; set a fetch size.
@@ -309,4 +310,4 @@ Source: [rrezartprebreza/spring-boot-skills](https://github.com/rrezartprebreza/
 `skills/spring-boot-4/transactional-patterns`, MIT License, © Rrezart Prebreza.
 Changes: optimistic locking with Spring Data JDBC instead of JPA/Hibernate, streaming reads inside a
 transaction, outbox in PostgreSQL instead of a broker, `Long` IDs; version conflict -> `409` without
-retry and one deadlock retry (ADR-00008 point 14).
+retry and one deadlock retry (ADR-STACK-00005 point 14).

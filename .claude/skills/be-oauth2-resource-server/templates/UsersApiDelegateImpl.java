@@ -15,7 +15,7 @@ import org.springframework.stereotype.Component;
 /**
  * Status endpoint delegate (example: GET /api/users/me, operation getMe, area "main") in backend-service,
  * as in the stack's reference implementation. The status endpoint path and schema come from the API contract
- * (ADR-00006; reference example: /api/users/me). The generated UsersApiController calls this delegate.
+ * (ADR-STACK-00003; reference example: /api/users/me). The generated UsersApiController calls this delegate.
  * Implements pattern (a) default: ENTRY is enough to call it; UserAccessService (which also implements
  * ApplicationAccess) decides from the database and either returns the profile or throws NoAccessException
  * (-> 403 /problems/no-access with reason). In pattern (b) token-roles, the status endpoint returns
@@ -32,7 +32,8 @@ public class UsersApiDelegateImpl implements UsersApiDelegate {
     @PreAuthorize(Roles.HAS_ENTRY)
     public ResponseEntity<UserResponseDto> getMe() {
         // loadProfile(auth):
-        //   auth.noAccessReason() present -> audit an UNPAIRED account with its sub, throw NoAccessException
+        //   auth.noAccessReason() present -> audit an UNPAIRED account (state of the mechanism) with its
+        //   sub, throw NoAccessException
         //   otherwise -> person by auth.personId(), its role codes and display permission codes
         UserProfile profile = userAccessService.loadProfile(AppAuthentication.current());
         return ResponseEntity.ok().cacheControl(CacheControl.noStore()).body(mapper.toDto(profile));

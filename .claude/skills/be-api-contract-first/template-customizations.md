@@ -1,7 +1,7 @@
 # Generator template customizations (controlled)
 
 Part of `be-api-contract-first`. Every change against the original templates of the **pinned**
-generator version is visible in Git and carried over on each generator upgrade (ADR-00006,
+generator version is visible in Git and carried over on each generator upgrade (ADR-STACK-00003,
 point 6). A change here is a controlled template change in its own pull request, never part of a
 feature change.
 

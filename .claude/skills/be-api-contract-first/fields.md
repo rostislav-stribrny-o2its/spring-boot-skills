@@ -1,6 +1,6 @@
 # Fields in the API model — required, empty, limits, compatibility
 
-Part of `be-api-contract-first`. Rules of ADR-00007 points 4, 6, 12 written as Java in `api-model`.
+Part of `be-api-contract-first`. Rules of ADR-STACK-00004 points 4, 6, 12 written as Java in `api-model`.
 
 ## Required and empty
 
@@ -60,8 +60,8 @@ through.
 | Change | Label needed |
 |---|---|
 | new optional request field, new response field, new operation, new spec file | no |
-| new enum value | no (ADR-00007 point 6: compatible; oasdiff reports it as a warning, not `ERR`) |
+| new enum value | no (ADR-STACK-00004 point 6: compatible; oasdiff reports it as a warning, not `ERR`) |
 | new required request field, removed or renamed field, operation or enum value, narrower type or limit, changed path | yes |
 
 A breaking change is split where possible: add the new form, switch the frontend, remove the old one
-later (ADR-00007 point 12).
+later (ADR-STACK-00004 point 12).

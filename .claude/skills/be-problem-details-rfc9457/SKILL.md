@@ -9,33 +9,34 @@ description: >
 
 # Problem Details - RFC 9457
 
-ADR-00007 point 9 fixes the error contract of the API; this skill implements it. There is **one**
+ADR-STACK-00004 point 9 fixes the error contract of the API; this skill implements it. There is **one**
 global handler (`GlobalProblemHandler`) in `lib-web`, which only `backend-service` imports
 (`be-maven-reactor`), plus the correlation ID filter (`be-correlation-logging`). Nothing else
 builds error bodies.
 
-## The contract (ADR-00007 point 9)
+## The contract (ADR-STACK-00004 point 9)
 
 | Situation | Status | `type` | Body |
 |---|---|---|---|
 | missing, invalid or expired token | `401` | — | **empty**; reason in `WWW-Authenticate` (security chain, `be-oauth2-resource-server`) |
 | unreadable body, wrong parameter type | `400` | `/problems/bad-request` | generic text |
 | invalid input (bean validation, field rules) | `422` | `/problems/validation` | `errors`: list of `{field, code, message}` |
-| person has no access to the application — on the status endpoint **and** any other call | `403` | `/problems/no-access` | `reason` (*example reasons:* `UNPAIRED` · `NO_ROLE` · `SUSPENDED`) |
+| person has no access to the application — on the status endpoint **and** any other call | `403` | `/problems/no-access` | `reason` (`UNPAIRED` · `NO_ROLE` · an entry-ban reason of the application, *example:* `SUSPENDED`) |
 | missing permission to an operation or record | `403` | `/problems/access-denied` | generic text |
 | not found | `404` | `/problems/not-found` | fixed noun, no ID |
 | business rule violated | `409` | `/problems/<rule-code>` | fixed text |
-| stale record version (optimistic lock) | `409` | `/problems/stale-version` | no retry (ADR-00008 point 14) |
+| stale record version (optimistic lock) | `409` | `/problems/stale-version` | no retry (ADR-STACK-00005 point 14) |
 | unexpected | `500` | `/problems/internal-error` | generic text; full exception only in the log |
 
 - Every body is `application/problem+json`; every response (errors included) carries the
-  correlation ID header — the filter sets it, not the handler.
+  correlation ID header — the filter sets it, not the handler. The correlation ID travels in the header only,
+  never as a body property.
 - An unknown request parameter is ignored, never `400`. No `423`, no `429`.
 - Texts **never repeat submitted values** (search terms, IDs, personal data). Framework messages
   can echo input (`Failed to convert value 'abc'`), so the handler replaces them with the status
   phrase.
 - Whether a record outside the user's permission answers `403` or `404`: open (decided by the
-  architecture owner, ADR-00007). The spelling of `<code>` in the type (`no-access` vs `NO_ACCESS`),
+  architecture owner, ADR-STACK-00004). The spelling of `<code>` in the type (`no-access` vs `NO_ACCESS`),
   the names of the `errors` items and how `409`/`422` mark a row of a bulk write: open (decided by
   the architecture owner in `docs/design/`); the templates use kebab-case types and
   `errors[{field, code, message}]` provisionally.
@@ -106,9 +107,9 @@ message; `Content-Type: application/problem+json` and the correlation header on 
 
 ## Provenance
 
-Adapted for this application's Java base (JDK 25, Spring Boot 4) and ADR-00007 point 9.
+Adapted for this application's Java base (JDK 25, Spring Boot 4) and ADR-STACK-00004 point 9.
 Source: [rrezartprebreza/spring-boot-skills](https://github.com/rrezartprebreza/spring-boot-skills)
 (its Spring Boot 4 Problem Details skill), MIT License, © Rrezart Prebreza (see `LICENSE.txt`).
-Changes: statuses and types per ADR-00007 (422/400, two 403 types, two 409 types, relative
+Changes: statuses and types per ADR-STACK-00004 (422/400, two 403 types, two 409 types, relative
 `/problems/<code>`), handler in `lib-web`, safe texts, integrity violations; example domain
 exceptions replaced by `ProblemException`.

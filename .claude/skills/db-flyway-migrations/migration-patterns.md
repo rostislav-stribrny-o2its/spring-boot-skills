@@ -24,8 +24,8 @@ ALTER TABLE customer_order ALTER COLUMN customer_email SET NOT NULL;
 -- V00009 (after no deployed code reads legacy_email)
 ALTER TABLE customer_order DROP COLUMN legacy_email;
 
--- Index on a table with traffic: CONCURRENTLY, ALONE in its own file (Flyway rejects mixing
--- transactional and non-transactional statements), and transactional-lock=false (otherwise the
+-- Index on a table with traffic: CONCURRENTLY index statements only, in their own file (SKILL.md
+-- "Index pattern": Flyway rejects mixing transactional and non-transactional statements), and transactional-lock=false (otherwise the
 -- build waits forever on Flyway's own advisory-lock transaction).
 -- V00006__index_customer_order_email.sql
 CREATE INDEX CONCURRENTLY idx_customer_order_customer_email ON customer_order (customer_email);
@@ -40,21 +40,21 @@ incompatible changes into expand, migrate, contract.
 
 ## Environments
 
-**Separate step in every environment (ADR-00008 point 12).** Migrations run exclusively via a
+**Separate step in every environment (ADR-STACK-00005 point 12).** Migrations run exclusively via a
 one-shot migration container (`dockerfiles/Dockerfile.db-migrate`, official Flyway image, pinned by
 digest, running as non-root) or local migration script (`backend/scripts/db.sh migrate local|deploy`)
 carrying the `db/migration` folders of both applications. It is the only holder of the owner password
 and applies the required settings (default schema, locations, placeholders, validation), `integration`
 first, then `backend`. Applications never hold the owner password and keep `spring.flyway.enabled: false`.
-The deployment command runs: backup (PROD), stop, migrate, start, health check (ADR-00008 point 12);
+The deployment command runs: backup (PROD), stop, migrate, start, health check (ADR-STACK-00005 point 12);
 where that command lives: open (decided by the architecture owner in `docs/admin-guide/operations/`).
 Keep the Flyway CLI version equal to the Flyway version managed by Spring Boot, so both write the
 same history table format. Reference: `dockerfiles/Dockerfile.db-migrate`, `backend/scripts/db.sh`.
 
-**Dropping the schema only on LOCAL** (ADR-00008 point 11): reset by recreating the local database
+**Dropping the schema only on LOCAL** (ADR-STACK-00005 point 11): reset by recreating the local database
 volume, or Flyway `clean` from the command line against the local database. Never via application
-configuration, never on DEV, TEST or PROD; how DEV and TEST are reset is open (decided by the
-architecture owner, ADR-00008).
+configuration, never on DEV, TEST or PROD; how DEV and TEST are reset is the application's own
+decision (ADR-STACK-00005 leaves it to the application).
 
 ## Data migrations over existing rows
 

@@ -1,8 +1,10 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!-- Template: backend/backend-service/pom.xml - a runnable application.
      scheduler-service is the same minus the API part: no api-spec link, no generator, no lib-web,
-     no lib-security, no Lombok-in-generated-code reason; plus com.microsoft.sqlserver:mssql-jdbc
-     (runtime) and, for its ITs, org.testcontainers:testcontainers-mssqlserver; webmvc only to serve
+     no lib-security, no Lombok-in-generated-code reason; plus the JDBC driver of the application's
+     source database (runtime) and, for its ITs, the matching Testcontainers module - the source
+     driver is the application's choice (example: com.microsoft.sqlserver:mssql-jdbc and
+     org.testcontainers:testcontainers-mssqlserver for MS SQL sources); webmvc only to serve
      actuator on the management port. The role is the module, never a Spring profile.
      Not yet verified by a build in this repository. -->
 <project xmlns="http://maven.apache.org/POM/4.0.0"
