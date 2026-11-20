@@ -39,6 +39,17 @@ Do not publish configprops/env actuator endpoints publicly or disable sanitizati
 Binding is normally at startup; changing a file or secret does not imply live refresh.
 Define restart/rotation behavior when configuration changes.
 
+## Features of the framework
+
+Spring's own features (actuator endpoints and their `access`, metrics, OpenTelemetry/OTLP export)
+get no custom `${KEY}` alias: a custom name only renames what Spring already binds. Put the standard
+property in `application.yaml` as the example of what exists, off by default (always what sends data
+out of the application), and let the environment switch it on with Spring's own variable name:
+relaxed binding maps `management.endpoint.prometheus.access` to
+`MANAGEMENT_ENDPOINT_PROMETHEUS_ACCESS`. Custom placeholders stay for the application's own values
+(its `app.*` settings, database and identity connection). Prove a switch in a test that applies the Spring variable name as a system environment
+property source.
+
 ## Secret rotation and exposure checks
 
 Document who owns each secret, how consumers reload it, and when the old credential is revoked.

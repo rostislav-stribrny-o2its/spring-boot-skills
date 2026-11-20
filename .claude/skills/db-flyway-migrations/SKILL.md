@@ -154,6 +154,8 @@ R__order_summary_view.sql
   `main` (RULE-014).
 - `R__` only for objects dropped and re-created as a whole (views, functions used by views). Tables,
   columns, constraints and reference data always go into `V` migrations.
+- **Module prefix.** A migration creating or renaming objects of a module with a declared prefix follows
+  `db-design-postgres-tables` (section "Naming").
 - The ShedLock table of an application is an ordinary `V` migration of that application, in its own
   schema (DDL in `be-scheduling-shedlock`).
 - **Index pattern.** An index on a NEW table goes in that table's create file. An index on an EXISTING
