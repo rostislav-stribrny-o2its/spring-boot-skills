@@ -135,11 +135,13 @@ Every field is `required` in the contract; `email` and `fullName` are additional
 ## 4. Audit of an unpaired account
 
 Written once per `/api/users/me` call of the unpaired caller (`loadProfile`, never in `decide`, which
-runs on every request) by `backend-service`'s own audit module (package `app.backend.audit`, table `audit_logs`,
+runs on every request) by `backend-service`'s own audit module (an own package, table `audit_logs`,
 `AuditService.record(...)`), not by a library: `action = 'auth.unpaired'`, `resource_type =
 'account'`, `resource_id = <sub>`, status `failed`, `extra` = the reason. No personal data other than
-`sub` is stored. If the application has no audit module yet, log the event at `WARN` with the `sub`
-only and add the audit row when the module exists.
+`sub` is stored. The refusal is audited in its own transaction, because the transaction of the call is
+rolled back (ADR-STACK-00012, points 1 and 2). If the application has no audit module yet, the
+rejection is an expected `4xx`: it is not logged as `ERROR` or `WARN`, the `INFO` access line of the
+call carries it (ADR-STACK-00012, point 6), and the audit row is added when the module exists.
 
 ## 5. Realm (`keycloak/config/realm.yaml`, keycloak-config-cli format)
 

@@ -145,8 +145,8 @@ public class OrderService {
   aggregates. Isolation is PostgreSQL's default `READ COMMITTED` — do not set another level.
 - A version conflict leaves the service as `OptimisticLockingFailureException` and becomes `409`
   **without retry**; a deadlock is retried around the whole transaction, after a full rollback, from
-  a separate bean, and only for operations explicitly marked as idempotent (ADR-STACK-00005 point
-  14); retrying **once** is this skill's choice, not the ADR's. Mechanics in `be-transactional-patterns`; HTTP mapping in
+  a separate bean, and only for an operation whose effects are all inside the transaction
+  (ADR-STACK-00005 point 14; every command of ADR-STACK-00010 qualifies); retrying **once** is this skill's choice, not the ADR's. Mechanics in `be-transactional-patterns`; HTTP mapping in
   `be-problem-details-rfc9457`.
 - Takes and returns domain types, commands or `…Row` read models — never `…Dto`, `…Entity`,
   `HttpServletRequest` or `ResponseEntity`.

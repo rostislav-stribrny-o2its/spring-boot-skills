@@ -170,8 +170,8 @@ ADR-STACK-00005 point 14: a **deadlock** in the database is retried automaticall
 whole transaction; a **version conflict is not retried** (above). Retrying **once** is this skill's
 choice, not the ADR's. Deadlocks are prevented first by
 short transactions and a deterministic lock order (e.g. sort IDs before a bulk change); the retry,
-after a full rollback at the use-case boundary (outer facade), is only for operations explicitly
-marked idempotent. Retry support ships in core Spring
+after a full rollback at the use-case boundary (outer facade), is only for an operation whose effects
+are all inside the transaction (every command of ADR-STACK-00010 qualifies). Retry support ships in core Spring
 Framework (`org.springframework.resilience.annotation`) — no Spring Retry dependency. Enable once
 with `@EnableResilientMethods`:
 

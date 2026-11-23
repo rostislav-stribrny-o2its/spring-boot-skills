@@ -100,28 +100,35 @@ request text until the folder is created.
   removing or renaming is breaking. Classify every value set (*fixed enum* / *managed lookup table*
   / *constrained free text*) and keep its values, and every length or range limit, equal in the DB,
   the `api-model`, the domain and the frontend translations.
-- Polymorphism (type hierarchies, unions): open — to be decided in a separate ADR (ADR-STACK-00004,
-  section on what it does not decide); do not introduce it without that decision.
+- Polymorphism only for a closed family of subtypes of one domain concept ("is a kind of"): `oneOf`
+  with a `discriminator` and a complete `mapping`, every subtype a named schema (ADR-STACK-00010,
+  point 8). A general "data pipe" of unrelated types, `anyOf` and a free object are not allowed.
+  Adding a subtype to a family returned in a response is a breaking change (`api-breaking`).
 
-### Errors, concurrency, lists (ADR-STACK-00004, points 9-11)
+### Errors, concurrency, lists (ADR-STACK-00004, points 9-11, 14)
 
 - Errors are `application/problem+json` (RFC 9457), `type` = `/problems/<code>`; `401` has an
   empty body. Every operation declares its error responses in the model. Mechanics:
   `be-problem-details-rfc9457`.
-- `422` invalid input with a list of field errors (field, code, text); `400` unreadable body or
-  wrong parameter type; `403` in two distinct types: `/problems/no-access` with `reason`
+- `422` invalid input with a list of violations `errors[]`, each `{code, field, target, params,
+  message}` (ADR-STACK-00004, point 14; `409` carries the same list); `400` unreadable body (a wrong
+  parameter type only on technical endpoints with parameters in the path); `403` in two distinct
+  types: `/problems/no-access` with `reason`
   (`UNPAIRED`, `NO_ROLE`, or an entry-ban reason of the application, *example:* `SUSPENDED`) when the person has no access to the application, and
-  `/problems/access-denied` for a missing permission to an operation or record; `404` not found;
+  `/problems/access-denied` for a missing permission to an operation on a record within the user's
+  read scope; a record outside that scope answers `404` (ADR-STACK-00010, point 13); `404` not found;
   `409` business rule violation **or** stale record version (distinct types). Error texts never
-  repeat submitted values. No `423`, no `429`.
+  repeat submitted values and never carry exception text, SQL or class names. No `423`, no `429`.
 - Optimistic locking: the record version travels in request and response bodies (no
   `ETag`/`If-Match`); a stale version answers `409` without retry.
 - Lists: page number + page size (default 50, maximum 500); the response carries the page items,
-  the exact total for the filter and optional totals computed by the backend. Sort by one or more
+  the exact total for the filter and optional totals for the whole filter; filter (with the user's read
+  scope), sort, paging, total and sums are done by the database in the query (ADR-STACK-00005,
+  point 18). Sort by one or more
   fields; the last sort key is always the ID. Search goes through `POST .../search` (terms never in
   the URL or the log). No cursor pagination. Page numbering (0/1-based) and the answer to a page
   size above 500: open (decided by the architecture owner in `docs/design/`).
-- API shape: data-oriented reads, service-oriented writes (domain operations, not row updates);
+- API shape (ADR-STACK-00010): data-oriented reads, service-oriented writes (domain operations, not row updates);
   screen-shaped or bulk operations instead of item-by-item loading, without one endpoint per
   widget. The backend prepares and reduces data.
 
