@@ -19,27 +19,32 @@ builds error bodies.
 | Situation | Status | `type` | Body |
 |---|---|---|---|
 | missing, invalid or expired token | `401` | — | **empty**; reason in `WWW-Authenticate` (security chain, `be-oauth2-resource-server`) |
-| unreadable body, wrong parameter type | `400` | `/problems/bad-request` | generic text |
-| invalid input (bean validation, field rules) | `422` | `/problems/validation` | `errors`: list of `{field, code, message}` |
+| unreadable body (wrong parameter type: only technical endpoints with path parameters) | `400` | `/problems/bad-request` | generic text |
+| invalid input (bean validation, field rules) | `422` | `/problems/validation` | `errors[]`: list of violations `{code, field, target, params, message}` (point 14) |
 | person has no access to the application — on the status endpoint **and** any other call | `403` | `/problems/no-access` | `reason` (`UNPAIRED` · `NO_ROLE` · an entry-ban reason of the application, *example:* `SUSPENDED`) |
-| missing permission to an operation or record | `403` | `/problems/access-denied` | generic text |
-| not found | `404` | `/problems/not-found` | fixed noun, no ID |
+| missing permission to an operation on a record within the user's read scope | `403` | `/problems/access-denied` | generic text |
+| not found, or a record outside the user's read scope (ADR-STACK-00010, point 13) | `404` | `/problems/not-found` | fixed noun, no ID |
 | business rule violated | `409` | `/problems/<rule-code>` | fixed text |
 | stale record version (optimistic lock) | `409` | `/problems/stale-version` | no retry (ADR-STACK-00005 point 14) |
 | unexpected | `500` | `/problems/internal-error` | generic text; full exception only in the log |
 
 - Every body is `application/problem+json`; every response (errors included) carries the
-  correlation ID header — the filter sets it, not the handler. The correlation ID travels in the header only,
-  never as a body property.
+  correlation ID header — the filter sets it, not the handler. The `Problem` body also carries the trace
+  ID and the request identity as extension members (ADR-STACK-00011, point 6; ADR-STACK-00004, point 9);
+  the backend creates the identity when the request has none readable.
 - An unknown request parameter is ignored, never `400`. No `423`, no `429`.
-- Texts **never repeat submitted values** (search terms, IDs, personal data). Framework messages
+- Texts **never repeat submitted values** (search terms, IDs, personal data) and never carry exception
+  text, SQL or class names (ADR-STACK-00004, points 9 and 14). Framework messages
   can echo input (`Failed to convert value 'abc'`), so the handler replaces them with the status
   phrase.
-- Whether a record outside the user's permission answers `403` or `404`: open (decided by the
-  architecture owner, ADR-STACK-00004). The spelling of `<code>` in the type (`no-access` vs `NO_ACCESS`),
-  the names of the `errors` items and how `409`/`422` mark a row of a bulk write: open (decided by
-  the architecture owner in `docs/design/`); the templates use kebab-case types and
-  `errors[{field, code, message}]` provisionally.
+- A record outside the user's read scope answers `404`; a forbidden operation on a record within the
+  scope answers `403 /problems/access-denied` (ADR-STACK-00010, point 13). A row of a bulk write is
+  marked by `field` (JSON Pointer) and `target` of the violation (ADR-STACK-00004, point 14). The
+  spelling of `<code>` in the type (`no-access` vs `NO_ACCESS`) and the names of the extension members
+  of `Problem`: open (decided by the architecture owner in `docs/design/`). Known code deviation: the
+  template classes `GlobalProblemHandler` and `ProblemException` still emit kebab-case types and the
+  older `errors[{field, code, message}]` without the trace id and request identity; new code follows
+  the table above (ADR-STACK-00004 point 14, ADR-STACK-00011 point 6) until the templates are aligned.
 
 ## Implementation
 

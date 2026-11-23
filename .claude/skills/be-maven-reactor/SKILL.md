@@ -48,8 +48,8 @@ backend/                          reactor root: pom.xml (packaging pom), .mvn/, 
 - Templates: `templates/parent-pom.xml`, `templates/lib-module-pom.xml`,
   `templates/app-module-pom.xml`. Copy, then adapt; keep the structure.
 - Add a library only when two applications need the same code, or when a cross-cutting concern
-  deserves one home. Code used by `backend-service` alone stays a package there (example: the
-  audit log is `app.backend.audit` with its own table, not a `lib-audit`); a library for it is
+  deserves one home. Code used by `backend-service` alone stays a package there (example: a
+  feature's own table and service stay in `app.backend.<module>`, not a `lib-<module>`); a library for it is
   justified only once `scheduler-service` needs the same code. A new library is imported (`@Import`
   of its entry configuration) by exactly the applications that use it.
 - A reference feature module `user` lives inside `backend-service` as package `app.backend.user`

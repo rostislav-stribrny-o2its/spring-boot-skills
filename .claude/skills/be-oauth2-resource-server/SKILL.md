@@ -238,7 +238,8 @@ segment, ADR-STACK-00004 point 12), and `app.security.me-path` must carry the sa
   (states of the mechanism, recommended names) or one of the application's entry-ban reasons
   (*example:* `SUSPENDED`). The frontend shows the reason and keeps the user signed in.
 - An unpaired account is audited with its `sub` (stored only for audit, never a key) as a row of the
-  backend's audit table (`action` `auth.unpaired`; reference.md §4).
+  backend's audit table (`action` `auth.unpaired`; reference.md §4); without an audit module, an `INFO` line
+  with the reason code only (reference.md §4).
 - `templates/UsersApiDelegateImpl.java` — the API delegate makes one call to the access service,
   which throws `NoAccessException` or returns the profile.
 

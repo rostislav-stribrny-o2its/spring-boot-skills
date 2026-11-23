@@ -18,8 +18,9 @@ stands for `null`). In requests, `required` means the client must send it.
 - `@NotNull`, `@Size`, `@Positive`, `@Max` are `jakarta.validation.constraints`; `@Nullable` is
   `org.jspecify.annotations.Nullable` (null-safety of the Java code, `be-null-safety`; it writes
   nothing into the spec on its own); `@Schema` is `io.swagger.v3.oas.annotations.media.Schema`.
-- Partial update (`PATCH`) and the meaning of an omitted field there are not fixed by the ADRs;
-  write updates as full replacements of the editable fields until `docs/design/` decides otherwise.
+- Domain data is not written with `PUT`, `PATCH` or `DELETE` (ADR-STACK-00010, point 6): a write is a
+  named `POST` command whose schema declares which fields are required, and removing a record is a
+  named command too. An omitted field never stands for `null`.
 - The stack's reference implementation does not yet write `required`/`nullable` into response
   schemas; the rule above is the ADR's and wins. Check the exported spec, not only the record.
 
@@ -61,6 +62,7 @@ through.
 |---|---|
 | new optional request field, new response field, new operation, new spec file | no |
 | new enum value | no (ADR-STACK-00004 point 6: compatible; oasdiff reports it as a warning, not `ERR`) |
+| new subtype in a polymorphic family returned in a response | yes (ADR-STACK-00010 point 8, until the compatibility check says otherwise; a family only in a request: no) |
 | new required request field, removed or renamed field, operation or enum value, narrower type or limit, changed path | yes |
 
 A breaking change is split where possible: add the new form, switch the frontend, remove the old one
